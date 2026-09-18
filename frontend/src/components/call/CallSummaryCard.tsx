@@ -7,9 +7,9 @@ import { CallSummary } from '../../types';
 
 function Row({ label, value }: {label: string;value: React.ReactNode;}) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b border-line py-3 last:border-0">
-      <dt className="text-sm text-ink-muted">{label}</dt>
-      <dd className="text-right text-sm font-medium text-ink">{value}</dd>
+    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1 sm:gap-4 border-b border-line py-3 last:border-0">
+      <dt className="text-sm text-ink-muted w-1/3">{label}</dt>
+      <dd className="text-left sm:text-right text-sm font-medium text-ink w-2/3">{value}</dd>
     </div>);
 
 }
@@ -47,8 +47,31 @@ export function CallSummaryCard({
           label="Identity verified"
           value={summary.identityVerified ? 'Yes' : <span className="text-danger">No</span>} />
         
-        <Row label="Intent" value={summary.intent} />
-        <Row label="Key details" value={summary.keyDetails} />
+        <Row label="Primary Intent" value={summary.primaryIntent} />
+        {summary.additionalIntents?.length > 0 && (
+          <Row label="Additional Intents" value={summary.additionalIntents.join(', ')} />
+        )}
+        {summary.keyDetails?.length > 0 && (
+          <Row label="Key Details" value={
+            <ul className="list-disc list-inside text-left sm:text-right">
+              {summary.keyDetails.map((detail, idx) => (
+                <li key={idx} className="whitespace-pre-wrap">{detail}</li>
+              ))}
+            </ul>
+          } />
+        )}
+        {summary.actionsPerformed?.length > 0 && (
+          <Row label="Actions Performed" value={
+            <ul className="list-disc list-inside text-left sm:text-right">
+              {summary.actionsPerformed.map((action, idx) => (
+                <li key={idx} className="whitespace-pre-wrap">{action}</li>
+              ))}
+            </ul>
+          } />
+        )}
+        {summary.paymentPromise && (
+          <Row label="Payment Promise" value={summary.paymentPromise} />
+        )}
         <Row label="Outcome" value={summary.outcome} />
         <Row
           label="Escalated"

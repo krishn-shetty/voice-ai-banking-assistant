@@ -38,7 +38,6 @@ async def authenticate_customer(
     *,
     email: str,
     phone_number: str,
-    date_of_birth: date,
 ) -> Customer | None:
     normalized_email = email.strip().lower()
     normalized_phone = normalize_phone(phone_number)
@@ -51,7 +50,6 @@ async def authenticate_customer(
         .where(
             Customer.email == normalized_email,
             Customer.phone_number == normalized_phone,
-            Customer.date_of_birth == date_of_birth,
         )
     )
 

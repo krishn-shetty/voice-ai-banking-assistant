@@ -37,8 +37,11 @@ export type CallIntent = "balance" | "loan" | "emi" | "payment" | "other";
 export interface CallSummary {
   status: "completed" | "incomplete";
   identityVerified: boolean;
-  intent: string;
-  keyDetails: string;
+  primaryIntent: string;
+  additionalIntents: string[];
+  keyDetails: string[];
+  actionsPerformed: string[];
+  paymentPromise: string | null;
   outcome: string;
   escalated: boolean;
   highlights: Highlight[];

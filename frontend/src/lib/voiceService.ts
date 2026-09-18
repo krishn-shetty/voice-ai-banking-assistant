@@ -6,6 +6,7 @@ import {
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
+  type TranscriptionSegment,
 } from "livekit-client";
 
 import type { LiveKitTokenResponse } from "../types";
@@ -278,6 +279,20 @@ class VoiceServiceManager {
     }
   }
 
+  async setSpeakerDevice(deviceId: string): Promise<void> {
+    for (const audioElement of this.audioElements.values()) {
+      // @ts-ignore - setSinkId is not in standard typescript DOM lib yet
+      if (typeof audioElement.setSinkId === 'function') {
+        try {
+          // @ts-ignore
+          await audioElement.setSinkId(deviceId);
+        } catch (error) {
+          console.warn("Unable to set speaker device:", error);
+        }
+      }
+    }
+  }
+
   /* ------------------------------------------------------------------------ */
   /* Room events                                                              */
   /* ------------------------------------------------------------------------ */
@@ -370,6 +385,26 @@ class VoiceServiceManager {
     room.on(RoomEvent.DataReceived, (payload, participant) => {
       this.handleDataMessage(payload, participant);
     });
+
+    // Native TranscriptionReceived is disabled in favor of DataChannel messages
+    // room.on(
+    //   RoomEvent.TranscriptionReceived,
+    //   (
+    //     segments: TranscriptionSegment[],
+    //     participant?: RemoteParticipant,
+    //   ) => {
+    //     for (const segment of segments) {
+    //       if (segment.isFinal) {
+    //         const text = segment.text.trim();
+    //         if (text) {
+    //           const isLocal =
+    //             participant?.identity === room.localParticipant.identity;
+    //           this.emitTranscript(text, isLocal ? "user" : "assistant");
+    //         }
+    //       }
+    //     }
+    //   },
+    // );
 
     room.on(RoomEvent.Disconnected, (reason) => {
       console.info("LiveKit disconnected:", reason);
@@ -486,10 +521,12 @@ class VoiceServiceManager {
         type === "transcript"
       ) {
         this.handleTranscriptMessage(message, type);
-
         return;
       }
-
+      
+      // If the agent sends text via "lk-chat", echo it as assistant transcript?
+      // No, agent already publishes assistant_transcript explicitly via conversation_item_added.
+      
       console.debug("LiveKit data message:", {
         type,
         participant: participant?.identity,
@@ -520,6 +557,33 @@ class VoiceServiceManager {
     }
 
     this.emitTranscript(text, sender);
+  }
+
+  /* ------------------------------------------------------------------------ */
+  /* Chat messaging                                                           */
+  /* ------------------------------------------------------------------------ */
+
+  sendChatMessage(text: string): void {
+    if (!this.room) return;
+
+    try {
+      const payload = JSON.stringify({
+        id: crypto.randomUUID(),
+        message: text,
+        timestamp: Date.now(),
+      });
+
+      const encoder = new TextEncoder();
+      this.room.localParticipant.publishData(encoder.encode(payload), {
+        reliable: true,
+        topic: "lk-chat"
+      });
+      
+      // Echo the typed message locally so the UI updates instantly
+      this.emitTranscript(text, "user");
+    } catch (error) {
+      console.error("Failed to send chat message", error);
+    }
   }
 
   /* ------------------------------------------------------------------------ */

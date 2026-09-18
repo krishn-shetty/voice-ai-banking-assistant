@@ -14,6 +14,7 @@ import { AppShell } from "./components/layout/AppShell";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 import Login from "./pages/Login";
+import Register from "./pages/Register";
 import { CallPage } from "./pages/Call";
 import { HistoryPage } from "./pages/History";
 import { CallDetailPage } from "./pages/CallDetail";
@@ -49,6 +50,11 @@ export function App() {
         <Route
           path="/login"
           element={<Login />}
+        />
+
+        <Route
+          path="/register"
+          element={<Register />}
         />
 
         {/* ================================================================== */}

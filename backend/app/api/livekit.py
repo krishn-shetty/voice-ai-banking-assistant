@@ -58,6 +58,7 @@ class TokenRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
+    assistant_identity: str
 
 
 class TokenResponse(BaseModel):
@@ -103,6 +104,7 @@ async def create_livekit_token(
     """
 
     participant_name = payload.participant_name.strip()
+    assistant_identity = payload.assistant_identity.strip().lower()
 
     # Pydantic already enforces the length constraints, but stripping can
     # result in an empty string if the input consisted only of whitespace.
@@ -112,6 +114,14 @@ async def create_livekit_token(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Participant name cannot be empty",
+        )
+
+    if assistant_identity not in ("kubera", "kanchana"):
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Assistant identity must be kubera or kanchana",
         )
 
     # ------------------------------------------------------------------------
@@ -163,6 +173,7 @@ async def create_livekit_token(
         {
             "call_id": str(call_id),
             "customer_id": str(current_customer.id),
+            "assistant_identity": assistant_identity,
         },
         separators=(",", ":"),
     )

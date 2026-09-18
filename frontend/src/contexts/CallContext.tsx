@@ -334,17 +334,32 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    try {
-      await api.endCall(callId);
+    // Wait for the agent to persist final messages, generate summary, and end call.
+    let attempts = 0;
+    const pollSummary = async () => {
       if (!mountedRef.current) return;
-      setIsSummaryReady(true);
-    } catch (error) {
-      console.error("Unable to finalize call:", error);
-      if (!mountedRef.current) return;
-      setIsSummaryReady(false);
-    } finally {
-      if (mountedRef.current) setCallAssistantIdentity(null);
-    }
+      if (attempts > 10) {
+        setIsSummaryReady(false);
+        setCallAssistantIdentity(null);
+        return;
+      }
+      try {
+        const call = await api.getCall(callId);
+        if (call.summary.status === "completed") {
+          setIsSummaryReady(true);
+          setCallAssistantIdentity(null);
+        } else {
+          attempts++;
+          setTimeout(pollSummary, 2000);
+        }
+      } catch (error) {
+        attempts++;
+        setTimeout(pollSummary, 2000);
+      }
+    };
+    
+    setTimeout(pollSummary, 1500);
+
   }, [currentCallId, isCallActive]);
 
   /* ------------------------------------------------------------------------ */
@@ -406,17 +421,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       if (!trimmed && !attachment) return;
 
       try {
-        await api.sendMessage({
-          callId: currentCallId,
-          text: trimmed,
-          attachment,
-          assistantName: assistant.name,
-        });
+        VoiceService.sendChatMessage(trimmed);
       } catch (error) {
         console.warn("Text message was not sent:", error);
       }
     },
-    [assistant.name, currentCallId, isCallActive],
+    [isCallActive],
   );
 
   /* ------------------------------------------------------------------------ */

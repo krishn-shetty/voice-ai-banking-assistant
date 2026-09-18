@@ -16,6 +16,7 @@ from livekit.agents import (
     function_tool,
 )
 from livekit.plugins import sarvam, silero
+from livekit import rtc
 
 from ai.llm.gemini import create_llm
 from ai.stt.deepgram import create_stt
@@ -534,6 +535,9 @@ async def entrypoint(
     call_id = metadata.get(
         "call_id",
     )
+    assistant_identity = metadata.get(
+        "assistant_identity",
+    )
 
     if not isinstance(customer_id, str):
         raise TypeError("LiveKit metadata customer_id must be a string")
@@ -541,12 +545,15 @@ async def entrypoint(
     if not isinstance(call_id, str):
         raise TypeError("LiveKit metadata call_id must be a string")
 
+    if not isinstance(assistant_identity, str) or assistant_identity not in ("kubera", "kanchana"):
+        raise TypeError("LiveKit metadata assistant_identity must be exactly 'kubera' or 'kanchana'")
+
     # ----------------------------------------------------------------------
     # Bind the agent to the backend-created call.
     # ----------------------------------------------------------------------
 
     state = ConversationContext(
-        assistant=DEFAULT_ASSISTANT,
+        assistant=assistant_identity,
         language=DEFAULT_LANGUAGE,
     )
 
@@ -584,6 +591,31 @@ async def entrypoint(
         tts=sarvam_tts,
     )
 
+    import asyncio
+    import time
+
+    background_tasks = set()
+
+    def add_background_task(coro) -> None:
+        task = asyncio.create_task(coro)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+
+    last_activity = time.time()
+
+    async def silence_watcher() -> None:
+        while True:
+            await asyncio.sleep(1)
+            if time.time() - last_activity > 15:
+                logger.info("Disconnecting due to 15s of silence.")
+                try:
+                    await ctx.room.disconnect()
+                except Exception:
+                    logger.exception("Failed to disconnect room on silence timeout.")
+                break
+
+    watcher_task = asyncio.create_task(silence_watcher())
+
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(
         event: UserInputTranscribedEvent,
@@ -597,10 +629,6 @@ async def entrypoint(
             )
 
         state.detected_language = event.language
-
-        state.transcript.append(
-            f"Customer: {event.transcript}",
-        )
 
         try:
             update_tts(
@@ -621,6 +649,108 @@ async def entrypoint(
             event.transcript,
         )
 
+        nonlocal last_activity
+        last_activity = time.time()
+
+        # We publish the transcript to the frontend immediately so the user sees their speech
+        try:
+            payload = json.dumps({
+                "type": "user_transcript",
+                "text": event.transcript
+            }).encode("utf-8")
+            
+            add_background_task(
+                ctx.room.local_participant.publish_data(payload)
+            )
+        except Exception:
+            logger.exception("Failed to publish user transcript data")
+
+    @ctx.room.on("data_received")
+    def on_data_received(data_packet: rtc.DataPacket) -> None:
+        if getattr(data_packet, "topic", None) == "lk-chat":
+            try:
+                payload = json.loads(data_packet.data.decode("utf-8"))
+                text = payload.get("message")
+                if text:
+                    logger.info("Received chat message from user: %s", text)
+                    
+                    # Update activity
+                    nonlocal last_activity
+                    last_activity = time.time()
+                    
+                    # 1. Add to session history so LLM sees it
+                    session.history.add_message(role="user", content=text)
+                    
+                    # 2. Publish back to frontend so it shows in UI
+                    # NOTE: The frontend already echoes typed messages locally via emitTranscript
+                    # so we don't need to publish it back over the data channel.
+                        
+                    # 3. Save to backend messages DB
+                    add_background_task(
+                        http_request(
+                            "POST",
+                            f"{BACKEND_URL}/calls/internal/{state.call_id}/messages",
+                            json={
+                                "role": "user",
+                                "content": text,
+                            }
+                        )
+                    )
+                    
+                    # 4. Generate LLM reply
+                    add_background_task(session.generate_reply())
+            except Exception:
+                logger.exception("Failed to process lk-chat data packet")
+
+    @session.on("conversation_item_added")
+    def on_conversation_item_added(event) -> None:
+        item = getattr(event, "item", None)
+        if not item:
+            return
+
+        role = getattr(item, "role", None)
+        if role not in ("user", "assistant", "agent"):
+            return
+
+        text_content = getattr(item, "text_content", None)
+        if callable(text_content):
+            try:
+                text_content = text_content()
+            except Exception:
+                text_content = None
+
+        if not text_content:
+            return
+
+        nonlocal last_activity
+        last_activity = time.time()
+
+        add_background_task(
+            http_request(
+                "POST",
+                f"{BACKEND_URL}/calls/internal/{state.call_id}/messages",
+                json={
+                    "role": "assistant" if role in ("assistant", "agent") else "user",
+                    "content": text_content,
+                }
+            )
+        )
+
+        if role in ("assistant", "agent"):
+            try:
+                payload = json.dumps({
+                    "type": "assistant_transcript",
+                    "text": text_content
+                }).encode("utf-8")
+                
+                add_background_task(
+                    ctx.room.local_participant.publish_data(payload)
+                )
+            except Exception:
+                logger.exception("Failed to publish agent transcript data")
+
+    # removed dead agent_speech_committed handler
+
     await session.start(
         agent=assistant,
         room=ctx.room,
@@ -638,11 +768,16 @@ async def entrypoint(
             f"Introduce yourself as {state.persona_name()}. "
             "Clearly disclose that you are an AI banking assistant. "
             "Keep the introduction short and natural. "
-            "Ask the customer for their account ID."
+            "Then, ask how you can help them today."
         ),
     )
 
     async def on_shutdown() -> None:
+        watcher_task.cancel()
+        if background_tasks:
+            logger.info("Waiting for %d background tasks to finish...", len(background_tasks))
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+
         try:
             await assistant.shutdown(
                 session,

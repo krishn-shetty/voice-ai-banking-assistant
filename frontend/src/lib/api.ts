@@ -20,6 +20,7 @@ export interface LoginResponse {
   customer_id: string;
   customer_name: string;
   masked_account: string | null;
+  account_id: string | null;
   expires_at: string;
 }
 
@@ -29,7 +30,15 @@ export interface AuthenticatedUserResponse {
   customer_name: string;
   email: string;
   phone_number: string;
+  account_id?: string;
   expires_at: string;
+}
+
+export interface BackendCallMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
 }
 
 export interface BackendCall {
@@ -40,6 +49,7 @@ export interface BackendCall {
   outcome: string | null;
   escalated: boolean;
   created_at: string;
+  messages: BackendCallMessage[];
 }
 
 export interface BackendCallListResponse {
@@ -138,6 +148,40 @@ export async function login(
   return data;
 }
 
+export async function register(
+  fullName: string,
+  email: string,
+  phoneNumber: string,
+  dateOfBirth: string,
+  address: string,
+  accountType: string,
+  initialBalance: number = 0,
+): Promise<LoginResponse> {
+  const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      full_name: fullName,
+      email,
+      phone_number: phoneNumber,
+      date_of_birth: dateOfBirth,
+      address,
+      account_type: accountType,
+      initial_balance: initialBalance,
+    }),
+  });
+
+  const data = await parseResponse<LoginResponse>(response);
+
+  if (!data.authenticated || !data.session_id) {
+    throw new Error("Registration failed.");
+  }
+
+  setSessionId(data.session_id);
+
+  return data;
+}
+
 export async function logout(): Promise<void> {
   const sessionId = getSessionId();
   if (!sessionId) return;
@@ -170,6 +214,7 @@ export async function getAuthenticatedUser(): Promise<User> {
     verified: true,
     email: data.email,
     mobile: data.phone_number,
+    accountNumber: data.account_id,
   };
 }
 
@@ -216,8 +261,8 @@ export async function getCallHistory(): Promise<CallRecord[]> {
     headers: authHeaders(),
   });
 
-  const data = await parseResponse<BackendCallListResponse>(response);
-  return data.calls.map(mapBackendCallToFrontend);
+  const data = await parseResponse<BackendCall[]>(response);
+  return data.map(mapBackendCallToFrontend);
 }
 
 export async function getCall(callId: string): Promise<CallRecord> {
@@ -407,54 +452,20 @@ function formatTime(dateString: string): string {
   });
 }
 
-/**
- * The backend agent stores a raw "Speaker: text" transcript (see
- * agent/agent.py `build_transcript`). Turn it into structured Message[]
- * so CallDetail can render it as chat bubbles instead of nothing.
- */
-function parseTranscriptToMessages(
-  transcript: string,
-  createdAt: string,
-): Message[] {
-  const trimmed = transcript.trim();
-  if (!trimmed) return [];
-
-  const timestamp = formatTime(createdAt);
-
-  return trimmed
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line, index) => {
-      const separatorIndex = line.indexOf(":");
-      const speaker =
-        separatorIndex >= 0 ? line.slice(0, separatorIndex).trim() : "";
-      const text =
-        separatorIndex >= 0 ? line.slice(separatorIndex + 1).trim() : line;
-
-      const sender: MessageSender =
-        speaker.toLowerCase() === "customer" ? "user" : "assistant";
-
-      return {
-        id: `${callIdSafe(createdAt)}_${sender}_${index}`,
-        sender,
-        senderName: sender === "user" ? "Customer" : "Assistant",
-        text,
-        timestamp,
-      };
-    });
+function parseMessages(backendMessages: BackendCallMessage[]): Message[] {
+  if (!backendMessages) return [];
+  return backendMessages.map((msg) => {
+    const sender = msg.role === "user" ? "user" : "assistant";
+    return {
+      id: msg.id,
+      sender,
+      senderName: sender === "user" ? "Customer" : "Assistant",
+      text: msg.content,
+      timestamp: formatTime(msg.created_at),
+    };
+  });
 }
 
-function callIdSafe(seed: string): string {
-  return seed.replace(/[^a-zA-Z0-9]/g, "");
-}
-
-/**
- * The Gemini summary carries free-form intent/outcome/key_details. There is
- * no per-turn highlight data from the backend, so we synthesize a short,
- * still-accurate highlight list from the structured summary instead of
- * leaving HighlightsCard permanently empty.
- */
 function buildHighlightsFromSummary(
   summary: Record<string, unknown>,
   createdAt: string,
@@ -462,30 +473,12 @@ function buildHighlightsFromSummary(
 ): Highlight[] {
   const time = formatTime(createdAt);
   const highlights: Highlight[] = [];
-
-  const intent = typeof summary.intent === "string" ? summary.intent : "";
-  if (intent) {
-    highlights.push({ id: "summary_intent", time, label: `Intent: ${intent}` });
-  }
-
-  const keyDetails = Array.isArray(summary.key_details)
-    ? summary.key_details.filter(
-        (item): item is string => typeof item === "string",
-      )
+  const convHighlights = Array.isArray(summary.conversation_highlights)
+    ? summary.conversation_highlights
     : [];
-
-  keyDetails.forEach((detail, index) => {
-    highlights.push({ id: `summary_detail_${index}`, time, label: detail });
+  convHighlights.forEach((hl, i) => {
+    highlights.push({ id: `hl_${i}`, time, label: String(hl) });
   });
-
-  const outcome = typeof summary.outcome === "string" ? summary.outcome : "";
-  if (outcome) {
-    highlights.push({
-      id: "summary_outcome",
-      time,
-      label: `Outcome: ${outcome}`,
-    });
-  }
 
   if (escalated) {
     highlights.push({
@@ -504,12 +497,23 @@ function mapBackendCallToFrontend(call: BackendCall): CallRecord {
       ? call.summary_json
       : {};
 
-  const intent = typeof summary.intent === "string" ? summary.intent : "other";
+  const intent =
+    typeof summary.primary_intent === "string"
+      ? summary.primary_intent
+      : "other";
 
   const keyDetails = Array.isArray(summary.key_details)
     ? summary.key_details.filter(
         (item): item is string => typeof item === "string",
       )
+    : [];
+  
+  const additionalIntents = Array.isArray(summary.additional_intents)
+    ? summary.additional_intents.map(String)
+    : [];
+
+  const actionsPerformed = Array.isArray(summary.actions_performed)
+    ? summary.actions_performed.map(String)
     : [];
 
   const result: CallRecord["result"] = call.escalated
@@ -529,10 +533,11 @@ function mapBackendCallToFrontend(call: BackendCall): CallRecord {
     summary: {
       status: call.outcome ? "completed" : "incomplete",
       identityVerified: true,
-      intent,
-      keyDetails: keyDetails.length
-        ? keyDetails.join(" • ")
-        : "No details recorded.",
+      primaryIntent: intent,
+      additionalIntents,
+      keyDetails,
+      actionsPerformed,
+      paymentPromise: typeof summary.payment_promise === "string" ? summary.payment_promise : null,
       outcome:
         typeof summary.outcome === "string"
           ? summary.outcome
@@ -544,6 +549,6 @@ function mapBackendCallToFrontend(call: BackendCall): CallRecord {
         call.escalated,
       ),
     },
-    messages: parseTranscriptToMessages(call.transcript || "", call.created_at),
+    messages: parseMessages(call.messages),
   };
 }

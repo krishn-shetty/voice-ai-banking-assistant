@@ -26,7 +26,8 @@ logger = logging.getLogger("voice-banking-agent.tts.sarvam")
 
 SPEAKER_MAP: dict[str, str] = {
     "kubera": "shubh",
-    "kanchan": "priya",
+    "kanchana": "shreya",
+    "kanchan": "shreya",
 }
 
 

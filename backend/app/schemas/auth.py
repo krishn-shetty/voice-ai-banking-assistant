@@ -12,7 +12,15 @@ class LoginRequest(BaseModel):
         max_length=20,
     )
 
+
+class RegisterRequest(BaseModel):
+    full_name: str = Field(min_length=1)
+    email: EmailStr
+    phone_number: str = Field(min_length=10, max_length=20)
     date_of_birth: date
+    address: str = Field(min_length=1)
+    account_type: str = Field(min_length=1)
+    initial_balance: float = Field(default=0, ge=0)
 
 
 class LoginResponse(BaseModel):
@@ -21,6 +29,7 @@ class LoginResponse(BaseModel):
     customer_id: UUID
     customer_name: str
     masked_account: str
+    account_id: str | None = None
     expires_at: datetime
 
 
@@ -30,6 +39,7 @@ class SessionResponse(BaseModel):
     customer_name: str
     email: EmailStr
     phone_number: str
+    account_id: str | None = None
     expires_at: datetime
 
     model_config = ConfigDict(

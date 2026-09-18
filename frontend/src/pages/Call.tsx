@@ -9,8 +9,9 @@ import { MessageInput } from "../components/call/MessageInput";
 import { CallControls } from "../components/call/CallControls";
 import { SummaryPanel } from "../components/call/SummaryPanel";
 import { HighlightsCard } from "../components/call/HighlightsCard";
-import { balanceSummary } from "../data/mockCalls";
 import { cn } from "../lib/utils";
+import { getCall } from "../lib/api";
+import type { CallSummary } from "../types";
 
 export function CallPage() {
   const {
@@ -28,7 +29,15 @@ export function CallPage() {
   const scrollRegionRef = useRef<HTMLDivElement | null>(null);
   const hasPositionedInitialTranscript = useRef(false);
   const [mobileSummaryOpen, setMobileSummaryOpen] = useState(false);
-  const callCompleted = callStatus === "ended" && isSummaryReady;
+
+  // Real backend summary state (fetched after call ends).
+  const [backendSummary, setBackendSummary] = useState<CallSummary | null>(
+    null,
+  );
+  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  const callCompleted =
+    callStatus === "ended" && isSummaryReady && backendSummary !== null;
 
   const conversationHighlights = useMemo(
     () => [
@@ -64,6 +73,38 @@ export function CallPage() {
   useEffect(() => {
     if (callCompleted) setMobileSummaryOpen(true);
   }, [callCompleted]);
+
+  // Fetch real summary from backend when call ends.
+  useEffect(() => {
+    if (!isSummaryReady || !currentCallId) return;
+
+    let cancelled = false;
+    setSummaryLoading(true);
+
+    getCall(currentCallId)
+      .then((record) => {
+        if (!cancelled) setBackendSummary(record.summary);
+      })
+      .catch((error) => {
+        console.error("Unable to load call summary:", error);
+        if (!cancelled) setBackendSummary(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSummaryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSummaryReady, currentCallId]);
+
+  // Reset summary state when a new call starts.
+  useEffect(() => {
+    if (callStatus === "connecting") {
+      setBackendSummary(null);
+      setSummaryLoading(false);
+    }
+  }, [callStatus]);
 
   return (
     <div className="call-page">
@@ -142,7 +183,7 @@ export function CallPage() {
         <div className="space-y-4">
           <HighlightsCard highlights={conversationHighlights} scrollable />
           <AnimatePresence>
-            {callCompleted && (
+            {callCompleted && backendSummary && currentCallId && (
               <motion.div
                 key="completed-summary"
                 initial={{ opacity: 0, y: 10 }}
@@ -151,8 +192,8 @@ export function CallPage() {
                 transition={{ duration: 0.3, ease: "easeOut" }}
               >
                 <SummaryPanel
-                  summary={balanceSummary}
-                  callId={currentCallId ?? "call_1024"}
+                  summary={backendSummary}
+                  callId={currentCallId}
                   showHighlights={false}
                 />
               </motion.div>
@@ -164,7 +205,7 @@ export function CallPage() {
       <div className="mobile-call-summary">
         <HighlightsCard highlights={conversationHighlights} scrollable />
         <AnimatePresence>
-          {callCompleted && (
+          {callCompleted && backendSummary && currentCallId && (
             <motion.section
               key="mobile-completed-summary"
               initial={{ opacity: 0, y: 10 }}
@@ -201,8 +242,8 @@ export function CallPage() {
                   >
                     <div className="pt-4">
                       <SummaryPanel
-                        summary={balanceSummary}
-                        callId={currentCallId ?? "call_1024"}
+                        summary={backendSummary}
+                        callId={currentCallId}
                         showHighlights={false}
                       />
                     </div>

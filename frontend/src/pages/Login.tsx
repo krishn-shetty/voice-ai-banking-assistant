@@ -3,10 +3,7 @@ import React, {
   useState,
 } from "react";
 
-import {
-  useLocation,
-  useNavigate,
-} from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { login } from "../lib/api";
 
@@ -18,9 +15,6 @@ export default function Login() {
     useState("");
 
   const [phoneNumber, setPhoneNumber] =
-    useState("");
-
-  const [dateOfBirth, setDateOfBirth] =
     useState("");
 
   const [loading, setLoading] =
@@ -41,7 +35,6 @@ export default function Login() {
       await login(
         email.trim(),
         phoneNumber.trim(),
-        dateOfBirth,
       );
 
       const state =
@@ -82,12 +75,12 @@ export default function Login() {
 
         <div className="mb-8 text-center">
 
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-900 text-xl font-semibold text-white">
-            K
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
+            <img src="/app-image.png" alt="KAUTILYA BANK" className="h-full w-full object-cover" />
           </div>
 
           <h1 className="text-2xl font-semibold text-slate-900">
-            Kubera
+            KAUTILYA BANK
           </h1>
 
           <p className="mt-2 text-sm text-slate-500">
@@ -155,30 +148,6 @@ export default function Login() {
             />
           </div>
 
-          {/* DOB */}
-
-          <div>
-            <label
-              htmlFor="dateOfBirth"
-              className="mb-2 block text-sm font-medium text-slate-700"
-            >
-              Date of birth
-            </label>
-
-            <input
-              id="dateOfBirth"
-              type="date"
-              value={dateOfBirth}
-              onChange={(event) =>
-                setDateOfBirth(
-                  event.target.value,
-                )
-              }
-              required
-              className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none transition focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-            />
-          </div>
-
           {/* ERROR */}
 
           {error && (
@@ -203,6 +172,13 @@ export default function Login() {
           </button>
 
         </form>
+
+        <p className="mt-6 text-center text-sm text-slate-600">
+          Don't have an account?{" "}
+          <Link to="/register" className="font-semibold text-slate-900 hover:underline">
+            Register
+          </Link>
+        </p>
 
         {/* FOOTER */}
 

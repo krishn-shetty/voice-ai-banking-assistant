@@ -10,6 +10,7 @@ from app.db import Base
 
 if TYPE_CHECKING:
     from app.models.customer import Customer
+    from app.models.message import CallMessage
 
 
 class Call(Base):
@@ -58,6 +59,12 @@ class Call(Base):
 
     payment_promises: Mapped[list["PaymentPromise"]] = relationship(
         back_populates="call",
+    )
+
+    messages: Mapped[list["CallMessage"]] = relationship(
+        back_populates="call",
+        cascade="all, delete-orphan",
+        order_by="CallMessage.sequence",
     )
 
 

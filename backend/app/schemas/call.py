@@ -8,7 +8,23 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class CallCreate(BaseModel):
+class CallMessageCreate(BaseModel):
+    role: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+
+
+class CallMessageResponse(BaseModel):
+    id: UUID
+    call_id: UUID
+    role: str
+    content: str
+    sequence: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CallBase(BaseModel):
     """
     Create a call for the currently authenticated customer.
 
@@ -23,6 +39,10 @@ class CallCreate(BaseModel):
     )
 
 
+class CallCreate(CallBase):
+    messages: list[CallMessageCreate] = Field(default_factory=list)
+
+
 class CallResponse(BaseModel):
     id: UUID
     customer_id: UUID
@@ -31,6 +51,7 @@ class CallResponse(BaseModel):
     outcome: str | None
     escalated: bool
     created_at: datetime
+    messages: list[CallMessageResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

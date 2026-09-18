@@ -49,6 +49,12 @@ class Customer(Base):
         nullable=False,
     )
 
+    address: Mapped[str] = mapped_column(
+        String(500),
+        nullable=False,
+        default="",
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

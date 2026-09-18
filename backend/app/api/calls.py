@@ -6,15 +6,19 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_current_customer
 from app.core.service_auth import verify_agent_service_token
 from app.db import get_db
 from app.models.call import Call, PaymentPromise
+from app.models.message import CallMessage
 from app.models.customer import Customer
 from app.schemas.call import (
     CallCreate,
+    CallMessageCreate,
+    CallMessageResponse,
     CallResponse,
     EscalationCreate,
     InternalCallCreate,
@@ -50,7 +54,9 @@ async def _get_owned_call(
     """
 
     result = await db.execute(
-        select(Call).where(
+        select(Call)
+        .options(selectinload(Call.messages))
+        .where(
             Call.id == call_id,
             Call.customer_id == customer_id,
         )
@@ -76,7 +82,9 @@ async def _get_call(
     """
 
     result = await db.execute(
-        select(Call).where(
+        select(Call)
+        .options(selectinload(Call.messages))
+        .where(
             Call.id == call_id,
         )
     )
@@ -154,6 +162,7 @@ async def get_customer_call_history(
 
     result = await db.execute(
         select(Call)
+        .options(selectinload(Call.messages))
         .where(
             Call.customer_id == current_customer.id,
         )
@@ -674,6 +683,39 @@ async def generate_internal_call_summary(
     await db.refresh(call)
 
     return call
+
+
+@router.post(
+    "/internal/{call_id}/messages",
+    response_model=CallMessageResponse,
+    dependencies=[
+        Depends(verify_agent_service_token),
+    ],
+)
+async def add_internal_call_message(
+    call_id: UUID,
+    payload: CallMessageCreate,
+    db: AsyncSession = Depends(get_db),
+) -> CallMessage:
+    """
+    Persist a single message (user or assistant) from the trusted voice agent.
+    """
+    call = await _get_call(
+        db=db,
+        call_id=call_id,
+    )
+
+    message = CallMessage(
+        call_id=call.id,
+        role=payload.role,
+        content=payload.content,
+    )
+
+    db.add(message)
+    await db.commit()
+    await db.refresh(message)
+
+    return message
 
 
 # ---------------------------------------------------------------------------

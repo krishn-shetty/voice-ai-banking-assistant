@@ -72,7 +72,7 @@ export function SettingsPage() {
 
   const maskedAccount = currentUser.accountNumber
     ? maskAccountNumber(currentUser.accountNumber)
-    : "•••• 1001";
+    : "—";
 
   return (
     <section
