@@ -1,0 +1,8 @@
+livekit-agents~=1.8
+livekit-plugins-deepgram~=1.8
+livekit-plugins-google~=1.8
+livekit-plugins-silero~=1.8
+livekit-plugins-sarvam~=1.8
+python-dotenv
+aiohttp
+PyJWT>=2.9,<3

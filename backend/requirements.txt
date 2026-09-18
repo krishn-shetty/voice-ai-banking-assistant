@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlalchemy
+asyncpg
+alembic
+pydantic-settings
+python-dotenv
+ruff
+psycopg[binary]
+google-genai
+email-validator>=2.2.0,<3.0.0
+PyJWT>=2.9,<3
