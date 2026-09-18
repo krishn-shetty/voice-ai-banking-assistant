@@ -1,0 +1,439 @@
+/* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+/* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+/* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: #f9fbfe;
+  color: #0f172a;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+.console-surface {
+  position: relative;
+  isolation: isolate;
+  background-color: #fbfdff;
+  background-image: radial-gradient(
+    circle,
+    rgba(120, 150, 190, 0.22) 0.8px,
+    transparent 0.9px
+  );
+  background-size: 13px 13px;
+}
+.console-surface::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.34),
+    rgba(248, 251, 255, 0.12)
+  );
+}
+
+/* The call page owns its own viewport. On wide screens (>=1280px) it never
+   scrolls itself — only .console-transcript (the message list) scrolls.
+   On narrower screens the console and the highlights/summary panel stack
+   vertically and the whole page scrolls (see the max-width: 1279px block
+   below) so the two never fight for the same space — that fixed the
+   summary-overlapping-chat bug on small screens. */
+.call-page {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.call-console {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px 16px 16px;
+}
+
+/* Header section inside call-console — fixed, never scrolls */
+.call-console-header {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+  margin-bottom: 8px;
+}
+
+.console-header-mobile {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.mobile-agent-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.mobile-call-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.console-header-desktop {
+  display: none;
+  justify-content: center;
+  width: 100%;
+}
+
+/* Wrapper that holds the fixed avatar layer + the scrolling transcript.
+   position: relative anchors the absolutely-positioned avatar layer so
+   it can never push or resize the chat below it. */
+.console-content {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Sticky/background avatar. Takes NO layout space (display:none by
+   default; becomes an absolutely-positioned overlay only on wide
+   screens below). Never scrolls, never blocks clicks. */
+.call-console-voice {
+  display: none;
+}
+
+/* ONE continuous, chronological, always-scrollable transcript.
+   Transparent background so the fixed avatar behind it shows through
+   the empty space between left-aligned (assistant) and right-aligned
+   (user) bubbles — matching a WhatsApp-style layout. Bubble widths are
+   capped in MessageBubble.tsx so long messages wrap inside their own
+   box instead of stretching across and covering the avatar. */
+.console-transcript {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 10px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 2px 8px;
+  background: transparent;
+}
+
+.console-transcript-placeholder {
+  display: flex;
+  min-height: 180px;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+}
+
+.call-console-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding-top: 8px;
+}
+
+.call-composer {
+  width: 100%;
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+/* Capped + centered so Microphone / Start call / Speaker cluster
+   tightly together at the bottom instead of spreading across the
+   full width of a wide desktop layout. */
+.call-controls-wrap {
+  margin-top: 12px;
+  width: 100%;
+  max-width: 320px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.desktop-call-sidebar {
+  display: none;
+}
+
+.mobile-call-summary {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 16px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.console-message-card {
+  box-sizing: border-box;
+  width: fit-content;
+  min-width: 0;
+  max-width: min(100%, 36rem);
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: normal;
+}
+.console-message-card--assistant {
+  border-color: rgba(244, 196, 207, 0.58);
+  background-color: #fff8f9;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 8px,
+    rgba(232, 161, 180, 0.16) 8px,
+    rgba(232, 161, 180, 0.16) 13px
+  );
+}
+.console-message-card--user {
+  border-color: rgba(234, 213, 177, 0.6);
+  background-color: #fffdf7;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    transparent 0,
+    transparent 8px,
+    rgba(211, 178, 123, 0.16) 8px,
+    rgba(211, 178, 123, 0.16) 13px
+  );
+}
+
+.voice-area--compact {
+  width: auto;
+  min-width: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+.voice-area__details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+}
+
+.voice-area--compact .voice-area__details {
+  flex: 1 1 auto;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.voice-area--compact .voice-area__waveform {
+  margin-top: 0;
+}
+
+.voice-area--compact .voice-area__name {
+  margin-top: 0;
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.voice-area--compact .voice-area__description {
+  margin-top: 1px;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  color: #64748b;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-area__image--compact {
+  width: 48px;
+  height: 48px;
+}
+
+@media (min-width: 375px) {
+  .voice-area__image--compact {
+    width: 52px;
+    height: 52px;
+  }
+}
+
+@media (min-width: 768px) {
+  .call-console {
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+
+  .mobile-call-summary {
+    padding: 20px 24px;
+  }
+
+  .voice-area__image--compact {
+    width: 56px;
+    height: 56px;
+  }
+}
+
+/* Below the desktop split-pane breakpoint (1280px), the call console and
+   the highlights/summary panel stack vertically. Letting the page itself
+   scroll — instead of forcing both flex children to fight for a single
+   fixed height — is what stops the summary panel from being crushed onto
+   / overlapping the console on small screens. */
+@media (max-width: 1279px) {
+  .call-page {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .call-console {
+    flex: 0 0 auto;
+    height: 78vh;
+    min-height: 480px;
+    max-height: 760px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .call-console {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding-right: clamp(20px, 2.5vw, 40px);
+    padding-left: clamp(20px, 2.5vw, 40px);
+  }
+
+  .console-header-mobile {
+    display: none;
+  }
+
+  .console-header-desktop {
+    display: flex;
+  }
+
+  .call-console-header {
+    border-bottom: none;
+    margin-bottom: 4px;
+    padding-bottom: 0;
+  }
+
+  .console-content {
+    padding-top: 4px;
+  }
+
+  /* Avatar becomes a fixed, centered background layer that overlays
+     the whole chat area. Zero layout height (absolute + inset:0), so
+     it can never push, shrink, or hide the transcript. Clicks and
+     scroll always pass through to the transcript above it. */
+  .call-console-voice {
+    display: flex;
+    position: absolute;
+    inset: 0;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .console-transcript {
+    padding: 4px 4px 10px;
+  }
+
+  .call-controls-wrap {
+    margin-top: 14px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .call-page {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: row;
+    overflow: hidden;
+  }
+
+  .call-console {
+    height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    max-height: none;
+  }
+
+  .desktop-call-sidebar {
+    display: block;
+    width: clamp(288px, 25vw, 372px);
+    min-width: 0;
+    flex: 0 0 auto;
+    overflow-y: auto;
+    border-left: 1px solid #e2e8f0;
+    padding: 20px;
+  }
+
+  .mobile-call-summary {
+    display: none;
+  }
+}
+
+@media (max-width: 374px) {
+  .call-console {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .call-controls-wrap {
+    margin-top: 12px;
+  }
+}
+
+*:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+.kubera-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.kubera-scroll::-webkit-scrollbar-thumb {
+  background: #e2e8f0;
+  border-radius: 999px;
+}
+.kubera-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
