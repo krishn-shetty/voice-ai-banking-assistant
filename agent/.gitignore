@@ -12,6 +12,13 @@ env/
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / JS
+node_modules/
+.vite/
 
 # Distribution / packaging
 build/
@@ -19,9 +26,16 @@ dist/
 *.egg-info/
 
 # Testing / coverage
-.pytest_cache/
 .coverage
 htmlcov/
+coverage/
+test-results/
+playwright-report/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
 
 # IDE / editor
 .vscode/
@@ -32,6 +46,7 @@ htmlcov/
 
 # Logs
 *.log
+logs/
 
 # Jupyter
 .ipynb_checkpoints/

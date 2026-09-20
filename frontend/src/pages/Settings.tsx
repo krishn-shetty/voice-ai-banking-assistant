@@ -5,7 +5,7 @@ import { Card, CardHeader } from "../components/ui/Card";
 import { Switch } from "../components/ui/Switch";
 import { Preferences } from "../types";
 import { cn, maskAccountNumber } from "../lib/utils";
-import { assistantProfiles } from "../data/mockConversation";
+import { assistantProfiles } from "../data/assistants";
 
 const microphones = [
   "Default microphone",

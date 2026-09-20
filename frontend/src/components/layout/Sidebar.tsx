@@ -13,7 +13,7 @@ import { cn } from "../../lib/utils";
 const navItems = [
   {
     to: "/",
-    label: "Call",
+    label: "Voice Call",
     icon: Phone,
   },
   {
@@ -96,19 +96,7 @@ export function SidebarNav({
             </NavLink>
           ),
         )}
-      </nav>
 
-      {/* ================================================================ */}
-      {/* PUSH LOGOUT TO BOTTOM                                            */}
-      {/* ================================================================ */}
-
-      <div className="flex-1" />
-
-      {/* ================================================================ */}
-      {/* LOGOUT                                                           */}
-      {/* ================================================================ */}
-
-      <div className="border-t border-line pt-3">
         <button
           type="button"
           onClick={() => {
@@ -135,9 +123,9 @@ export function SidebarNav({
             aria-hidden="true"
           />
 
-          Log out
+          Logout
         </button>
-      </div>
+      </nav>
     </div>
   );
 }

@@ -5,7 +5,9 @@ export default {content: [
   theme: {
     extend: {
       colors: {
-        canvas: '#F8FAFC',
+        canvas: '#F5F4EF',
+        sidebar: '#F5F4EF',
+        panel: '#F5F4EF',
         ink: {
           DEFAULT: '#0F172A',
           muted: '#64748B',

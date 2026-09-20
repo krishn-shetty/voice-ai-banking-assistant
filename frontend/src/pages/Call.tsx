@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Phone, PhoneOff } from "lucide-react";
 import { useCall } from "../contexts/CallContext";
 import { CallStatusPill } from "../components/call/CallStatusPill";
 import { VoiceArea } from "../components/call/VoiceArea";
@@ -22,6 +22,7 @@ export function CallPage() {
     currentCallId,
     preferences,
     assistant,
+    toggleCall,
   } = useCall();
 
   // Single scroll region for the whole transcript — this is the ONLY
@@ -34,10 +35,13 @@ export function CallPage() {
   const [backendSummary, setBackendSummary] = useState<CallSummary | null>(
     null,
   );
-  const [summaryLoading, setSummaryLoading] = useState(false);
+
+  const isEnded = callStatus === "ENDED" || callStatus === "ended";
+  const isConnecting =
+    callStatus === "CONNECTING" || callStatus === "connecting";
 
   const callCompleted =
-    callStatus === "ended" && isSummaryReady && backendSummary !== null;
+    isEnded && (isSummaryReady || backendSummary !== null);
 
   const conversationHighlights = useMemo(
     () => [
@@ -46,7 +50,7 @@ export function CallPage() {
         time: message.timestamp,
         label: `${message.senderName}: ${message.text}`,
       })),
-      ...(callCompleted
+      ...(callCompleted || isEnded
         ? [
             {
               id: "highlight_call_ended",
@@ -56,7 +60,7 @@ export function CallPage() {
           ]
         : []),
     ],
-    [messages, callCompleted],
+    [messages, callCompleted, isEnded],
   );
 
   useEffect(() => {
@@ -71,15 +75,14 @@ export function CallPage() {
   }, [messages.length]);
 
   useEffect(() => {
-    if (callCompleted) setMobileSummaryOpen(true);
-  }, [callCompleted]);
+    if (callCompleted || isEnded) setMobileSummaryOpen(true);
+  }, [callCompleted, isEnded]);
 
   // Fetch real summary from backend when call ends.
   useEffect(() => {
-    if (!isSummaryReady || !currentCallId) return;
+    if (!currentCallId || !isEnded) return;
 
     let cancelled = false;
-    setSummaryLoading(true);
 
     getCall(currentCallId)
       .then((record) => {
@@ -88,23 +91,19 @@ export function CallPage() {
       .catch((error) => {
         console.error("Unable to load call summary:", error);
         if (!cancelled) setBackendSummary(null);
-      })
-      .finally(() => {
-        if (!cancelled) setSummaryLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isSummaryReady, currentCallId]);
+  }, [isEnded, isSummaryReady, currentCallId]);
 
   // Reset summary state when a new call starts.
   useEffect(() => {
-    if (callStatus === "connecting") {
+    if (isConnecting) {
       setBackendSummary(null);
-      setSummaryLoading(false);
     }
-  }, [callStatus]);
+  }, [isConnecting]);
 
   return (
     <div className="call-page">
@@ -165,17 +164,43 @@ export function CallPage() {
         </div>
 
         <div className="call-console-actions">
-          <div className="call-composer">
-            <MessageInput />
-          </div>
+          {isEnded ? (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 w-full rounded-2xl border border-line bg-white p-4 shadow-card">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                  <PhoneOff className="h-5 w-5" aria-hidden="true" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">Call Completed</h3>
+                  <p className="text-xs text-ink-muted">
+                    Summary and highlights generated for this session.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={toggleCall}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+              >
+                <Phone className="h-4 w-4" aria-hidden="true" />
+                Start New Call
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="call-composer">
+                <MessageInput />
+              </div>
 
-          <div className="call-controls-wrap">
-            <CallControls />
-          </div>
+              <div className="call-controls-wrap">
+                <CallControls />
+              </div>
+            </>
+          )}
         </div>
       </section>
 
-      {/* Live highlights remain available throughout the call. */}
+      {/* Live highlights remain available throughout the call, and Call Summary + Download Options post-call */}
       <aside
         aria-label="Conversation highlights and call summary"
         className="desktop-call-sidebar"
@@ -183,7 +208,7 @@ export function CallPage() {
         <div className="space-y-4">
           <HighlightsCard highlights={conversationHighlights} scrollable />
           <AnimatePresence>
-            {callCompleted && backendSummary && currentCallId && (
+            {isEnded && currentCallId && (
               <motion.div
                 key="completed-summary"
                 initial={{ opacity: 0, y: 10 }}
@@ -194,6 +219,7 @@ export function CallPage() {
                 <SummaryPanel
                   summary={backendSummary}
                   callId={currentCallId}
+                  ready={backendSummary !== null}
                   showHighlights={false}
                 />
               </motion.div>
@@ -205,7 +231,7 @@ export function CallPage() {
       <div className="mobile-call-summary">
         <HighlightsCard highlights={conversationHighlights} scrollable />
         <AnimatePresence>
-          {callCompleted && backendSummary && currentCallId && (
+          {isEnded && currentCallId && (
             <motion.section
               key="mobile-completed-summary"
               initial={{ opacity: 0, y: 10 }}
@@ -221,7 +247,7 @@ export function CallPage() {
                 aria-controls="mobile-completed-summary-content"
                 className="flex w-full items-center justify-between gap-3 rounded-2xl border border-line bg-white px-4 py-3 text-left text-sm font-semibold text-ink shadow-card"
               >
-                Call Summary
+                Call Summary & Download
                 <ChevronDown
                   className={cn(
                     "h-4 w-4 shrink-0 text-ink-muted transition-transform",
@@ -244,6 +270,7 @@ export function CallPage() {
                       <SummaryPanel
                         summary={backendSummary}
                         callId={currentCallId}
+                        ready={backendSummary !== null}
                         showHighlights={false}
                       />
                     </div>
@@ -257,3 +284,4 @@ export function CallPage() {
     </div>
   );
 }
+

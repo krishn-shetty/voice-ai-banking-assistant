@@ -49,7 +49,11 @@ logs/
 credentials.json
 service-account.json
 
-# Coverage
+# Coverage / Testing
 .coverage
 htmlcov/
 coverage.xml
+coverage/
+test-results/
+playwright-report/
+

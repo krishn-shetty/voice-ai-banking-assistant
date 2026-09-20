@@ -19,8 +19,8 @@ import {
   User,
 } from "../types";
 
-import { defaultPreferences } from "../data/mockCalls";
-import { assistantProfiles } from "../data/mockConversation";
+import { defaultPreferences } from "../data/preferences";
+import { assistantProfiles } from "../data/assistants";
 import { VoiceService } from "../lib/voiceService";
 import * as api from "../lib/api";
 import { timeLabel } from "../lib/utils";
@@ -180,6 +180,25 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       if (mountedRef.current) setIsListening(listening);
     });
 
+    const offAgentState = VoiceService.onAgentState((state) => {
+      if (!mountedRef.current) return;
+      setCallStatus(state);
+      if (state === "SPEAKING") {
+        setIsSpeaking(true);
+        setIsListening(false);
+      } else if (state === "LISTENING") {
+        setIsSpeaking(false);
+        setIsListening(true);
+      } else if (state === "THINKING") {
+        setIsSpeaking(false);
+        setIsListening(false);
+      } else if (state === "ENDED") {
+        setIsSpeaking(false);
+        setIsListening(false);
+        setIsCallActive(false);
+      }
+    });
+
     const offTranscript = VoiceService.onTranscript(({ text, sender }) => {
       if (!mountedRef.current) return;
       const trimmedText = text.trim();
@@ -203,6 +222,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     return () => {
       offSpeaking();
       offListening();
+      offAgentState();
       offTranscript();
     };
   }, [assistant.name, currentUser?.name]);
@@ -233,23 +253,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   }, [isCallActive]);
 
   /* ------------------------------------------------------------------------ */
-  /* Call status                                                              */
-  /* ------------------------------------------------------------------------ */
-
-  useEffect(() => {
-    if (!isCallActive) return;
-    if (isSpeaking) {
-      setCallStatus("speaking");
-      return;
-    }
-    if (isListening && !isMuted) {
-      setCallStatus("listening");
-      return;
-    }
-    setCallStatus("connected");
-  }, [isCallActive, isSpeaking, isListening, isMuted]);
-
-  /* ------------------------------------------------------------------------ */
   /* Start call                                                               */
   /* ------------------------------------------------------------------------ */
 
@@ -263,7 +266,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
     const lockedIdentity = assistantIdentity;
 
-    setCallStatus("connecting");
+    setCallStatus("CONNECTING");
     setIsSummaryReady(false);
     setCallDuration(0);
     setMessages([]);
@@ -287,7 +290,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       await VoiceService.start(tokenData);
 
       if (!mountedRef.current) return;
-      setCallStatus("connected");
+      if (VoiceService.getCurrentAgentState() === "ready" || VoiceService.getCurrentAgentState() === "CONNECTING") {
+        setCallStatus("LISTENING");
+      }
     } catch (error) {
       console.error("Unable to start voice call:", error);
 
@@ -320,7 +325,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setIsCallActive(false);
     setIsListening(false);
     setIsSpeaking(false);
-    setCallStatus("ended");
+    setCallStatus("ENDED");
 
     if (tickRef.current) {
       clearInterval(tickRef.current);
@@ -455,12 +460,16 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const resolvedUser: User = currentUser ?? {
-    id: "",
-    name: "Customer",
-    initials: "C",
-    verified: false,
-  };
+  const resolvedUser: User = useMemo(
+    () =>
+      currentUser ?? {
+        id: "",
+        name: "Customer",
+        initials: "C",
+        verified: false,
+      },
+    [currentUser],
+  );
 
   const value = useMemo<CallContextValue>(
     () => ({

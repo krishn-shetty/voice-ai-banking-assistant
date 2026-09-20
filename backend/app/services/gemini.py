@@ -1,4 +1,6 @@
+import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from google import genai
@@ -6,6 +8,8 @@ from google import genai
 from app.schemas.summary import CallSummary
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 def get_gemini_client() -> genai.Client:
@@ -15,6 +19,23 @@ def get_gemini_client() -> genai.Client:
         raise RuntimeError("GOOGLE_API_KEY is not configured")
 
     return genai.Client(api_key=api_key)
+
+
+def extract_json_payload(text: str) -> str:
+    """
+    Safely extract JSON payload from text, stripping markdown code fences or surrounding text.
+    """
+    text = text.strip()
+    # Match markdown code block ```json ... ``` or ``` ... ```
+    match = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    # Match outermost json object braces { ... }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start : end + 1].strip()
+    return text
 
 
 async def summarize_call(transcript: str) -> CallSummary:
@@ -41,17 +62,34 @@ Transcript:
 {transcript}
 """
 
-    model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-    response = await client.aio.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=genai.types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=CallSummary,
-        ),
-    )
+    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+    try:
+        response = await client.aio.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CallSummary,
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Gemini summary generation failed with model=%s: %s. Retrying with gemini-2.0-flash",
+            model,
+            exc,
+        )
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=genai.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CallSummary,
+            ),
+        )
 
-    if not response.text:
+    if not response or not response.text:
         raise RuntimeError("Gemini returned an empty response")
 
-    return CallSummary.model_validate_json(response.text)
+    raw_text = extract_json_payload(response.text)
+    return CallSummary.model_validate_json(raw_text)
+

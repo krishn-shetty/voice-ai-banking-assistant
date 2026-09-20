@@ -14,7 +14,7 @@ def required_env(name: str) -> str:
 
     if not value:
         raise RuntimeError(
-            f"{name} is missing from your .env file",
+            f"{name} is not set in the environment",
         )
 
     return value

@@ -6,10 +6,9 @@ import {
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
-  type TranscriptionSegment,
 } from "livekit-client";
 
-import type { LiveKitTokenResponse } from "../types";
+import type { CallStatus, LiveKitTokenResponse } from "../types";
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -22,6 +21,7 @@ type TranscriptEvent = {
 
 type TranscriptListener = (event: TranscriptEvent) => void;
 type BooleanListener = (value: boolean) => void;
+type AgentStateListener = (state: CallStatus) => void;
 
 /* -------------------------------------------------------------------------- */
 /* Voice service                                                              */
@@ -33,12 +33,16 @@ class VoiceServiceManager {
   private transcriptListeners = new Set<TranscriptListener>();
   private speakingListeners = new Set<BooleanListener>();
   private listeningListeners = new Set<BooleanListener>();
+  private agentStateListeners = new Set<AgentStateListener>();
 
   private audioElements = new Map<string, HTMLAudioElement>();
 
   private started = false;
   private muted = false;
   private speakerEnabled = true;
+
+  private currentAgentState: CallStatus = "ready";
+  private speakingHoldTimer: number | null = null;
 
   /* ------------------------------------------------------------------------ */
   /* State                                                                    */
@@ -50,6 +54,37 @@ class VoiceServiceManager {
 
   isConnected(): boolean {
     return this.room !== null && this.room.state === ConnectionState.Connected;
+  }
+
+  getCurrentAgentState(): CallStatus {
+    return this.currentAgentState;
+  }
+
+  onAgentState(listener: AgentStateListener): () => void {
+    this.agentStateListeners.add(listener);
+
+    return () => {
+      this.agentStateListeners.delete(listener);
+    };
+  }
+
+  private emitAgentState(state: CallStatus): void {
+    this.currentAgentState = state;
+
+    for (const listener of this.agentStateListeners) {
+      listener(state);
+    }
+
+    if (state === "SPEAKING") {
+      this.emitSpeaking(true);
+      this.emitListening(false);
+    } else if (state === "LISTENING") {
+      this.emitSpeaking(false);
+      this.emitListening(true);
+    } else {
+      this.emitSpeaking(false);
+      this.emitListening(false);
+    }
   }
 
   /* ------------------------------------------------------------------------ */
@@ -281,11 +316,12 @@ class VoiceServiceManager {
 
   async setSpeakerDevice(deviceId: string): Promise<void> {
     for (const audioElement of this.audioElements.values()) {
-      // @ts-ignore - setSinkId is not in standard typescript DOM lib yet
-      if (typeof audioElement.setSinkId === 'function') {
+      const element = audioElement as HTMLAudioElement & {
+        setSinkId?: (id: string) => Promise<void>;
+      };
+      if (typeof element.setSinkId === "function") {
         try {
-          // @ts-ignore
-          await audioElement.setSinkId(deviceId);
+          await element.setSinkId(deviceId);
         } catch (error) {
           console.warn("Unable to set speaker device:", error);
         }
@@ -339,18 +375,17 @@ class VoiceServiceManager {
 
       switch (state) {
         case ConnectionState.Connecting:
-          this.emitListening(false);
+          this.emitAgentState("CONNECTING");
           break;
 
         case ConnectionState.Connected:
           if (!this.muted) {
-            this.emitListening(true);
+            this.emitAgentState("LISTENING");
           }
           break;
 
         case ConnectionState.Disconnected:
-          this.emitListening(false);
-          this.emitSpeaking(false);
+          this.emitAgentState("ENDED");
           break;
 
         default:
@@ -358,22 +393,9 @@ class VoiceServiceManager {
       }
     });
 
-    room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-      const remoteSpeakerExists = speakers.some(
-        (participant) =>
-          participant.identity !== room.localParticipant.identity,
-      );
-
-      if (remoteSpeakerExists) {
-        this.emitSpeaking(true);
-        this.emitListening(false);
-      } else {
-        this.emitSpeaking(false);
-
-        if (room.state === ConnectionState.Connected && !this.muted) {
-          this.emitListening(true);
-        }
-      }
+    room.on(RoomEvent.ActiveSpeakersChanged, () => {
+      // Disabled: ActiveSpeakersChanged flaps during natural TTS pauses.
+      // We rely solely on the authoritative "agent_state" data messages from backend.
     });
 
     room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
@@ -386,33 +408,17 @@ class VoiceServiceManager {
       this.handleDataMessage(payload, participant);
     });
 
-    // Native TranscriptionReceived is disabled in favor of DataChannel messages
-    // room.on(
-    //   RoomEvent.TranscriptionReceived,
-    //   (
-    //     segments: TranscriptionSegment[],
-    //     participant?: RemoteParticipant,
-    //   ) => {
-    //     for (const segment of segments) {
-    //       if (segment.isFinal) {
-    //         const text = segment.text.trim();
-    //         if (text) {
-    //           const isLocal =
-    //             participant?.identity === room.localParticipant.identity;
-    //           this.emitTranscript(text, isLocal ? "user" : "assistant");
-    //         }
-    //       }
-    //     }
-    //   },
-    // );
-
     room.on(RoomEvent.Disconnected, (reason) => {
       console.info("LiveKit disconnected:", reason);
 
       this.started = false;
 
-      this.emitSpeaking(false);
-      this.emitListening(false);
+      if (this.speakingHoldTimer !== null) {
+        window.clearTimeout(this.speakingHoldTimer);
+        this.speakingHoldTimer = null;
+      }
+
+      this.emitAgentState("ENDED");
 
       this.removeAllAudioElements();
     });
@@ -446,12 +452,12 @@ class VoiceServiceManager {
 
     this.audioElements.set(key, audioElement);
 
-    void audioElement.play().catch((error) => {
-      /*
-       * This is commonly caused by browser autoplay policy.
-       * LiveKit playback can still be started after a user gesture.
-       */
-      console.warn("Browser blocked automatic audio playback:", error);
+    console.info("[VOICE] remote audio subscribed");
+
+    void audioElement.play().then(() => {
+      console.info("[VOICE] audio playback started");
+    }).catch((error) => {
+      console.warn("[VOICE] audio playback failed", error);
     });
 
     console.info("Remote audio track attached:", participant.identity);
@@ -523,6 +529,39 @@ class VoiceServiceManager {
         this.handleTranscriptMessage(message, type);
         return;
       }
+
+      if (type === "agent_state") {
+        if (typeof message.state === "string") {
+          const rawState = message.state.toLowerCase();
+
+          if (rawState === "speaking") {
+            if (this.speakingHoldTimer !== null) {
+              window.clearTimeout(this.speakingHoldTimer);
+              this.speakingHoldTimer = null;
+            }
+            this.emitAgentState("SPEAKING");
+          } else if (rawState === "thinking") {
+            if (this.speakingHoldTimer !== null) {
+              window.clearTimeout(this.speakingHoldTimer);
+              this.speakingHoldTimer = null;
+            }
+            this.emitAgentState("THINKING");
+          } else if (rawState === "idle" || rawState === "listening") {
+            if (this.currentAgentState === "SPEAKING") {
+              if (this.speakingHoldTimer !== null) {
+                window.clearTimeout(this.speakingHoldTimer);
+              }
+              this.speakingHoldTimer = window.setTimeout(() => {
+                this.speakingHoldTimer = null;
+                this.emitAgentState("LISTENING");
+              }, 300);
+            } else {
+              this.emitAgentState("LISTENING");
+            }
+          }
+        }
+        return;
+      }
       
       // If the agent sends text via "lk-chat", echo it as assistant transcript?
       // No, agent already publishes assistant_transcript explicitly via conversation_item_added.
@@ -556,6 +595,14 @@ class VoiceServiceManager {
       sender = message.sender === "user" ? "user" : "assistant";
     }
 
+    if (sender === "user") {
+      if (this.speakingHoldTimer !== null) {
+        window.clearTimeout(this.speakingHoldTimer);
+        this.speakingHoldTimer = null;
+      }
+      this.emitAgentState("THINKING");
+    }
+
     this.emitTranscript(text, sender);
   }
 
@@ -565,6 +612,12 @@ class VoiceServiceManager {
 
   sendChatMessage(text: string): void {
     if (!this.room) return;
+
+    if (this.speakingHoldTimer !== null) {
+      window.clearTimeout(this.speakingHoldTimer);
+      this.speakingHoldTimer = null;
+    }
+    this.emitAgentState("THINKING");
 
     try {
       const payload = JSON.stringify({
@@ -578,9 +631,6 @@ class VoiceServiceManager {
         reliable: true,
         topic: "lk-chat"
       });
-      
-      // Echo the typed message locally so the UI updates instantly
-      this.emitTranscript(text, "user");
     } catch (error) {
       console.error("Failed to send chat message", error);
     }

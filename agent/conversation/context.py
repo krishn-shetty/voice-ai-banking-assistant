@@ -5,7 +5,7 @@ from uuid import UUID
 
 PERSONAS = {
     "kanchana": {
-        "name": "Kanchan",
+        "name": "Kanchana",
         "gender": "female",
         "aliases": {
             "kanchan",

@@ -1,8 +1,14 @@
 export type CallStatus =
   | "ready"
+  | "CONNECTING"
+  | "LISTENING"
+  | "THINKING"
+  | "SPEAKING"
+  | "ENDED"
   | "connecting"
   | "connected"
   | "listening"
+  | "thinking"
   | "speaking"
   | "ended";
 

@@ -65,9 +65,16 @@ export default function Login() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <main
+      className="min-h-screen w-full overflow-hidden bg-slate-900 bg-center bg-no-repeat flex items-center justify-center p-4 sm:p-6 md:p-8"
+      style={{
+        backgroundImage: "url('/login-background.png')",
+        backgroundSize: "100% 100%",
+        backgroundAttachment: "fixed",
+      }}
+    >
 
-      <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">
+      <section className="w-full max-w-md h-[520px] max-h-[85vh] my-auto flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-2xl transform transition-transform md:translate-x-24 lg:translate-x-32">
 
         {/* ================================================================ */}
         {/* BRAND                                                            */}
@@ -178,12 +185,6 @@ export default function Login() {
           <Link to="/register" className="font-semibold text-slate-900 hover:underline">
             Register
           </Link>
-        </p>
-
-        {/* FOOTER */}
-
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Demo banking environment
         </p>
 
       </section>

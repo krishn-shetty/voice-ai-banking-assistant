@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.auth import get_current_customer
 from app.core.service_auth import verify_agent_service_token
 from app.db import get_db
 from app.models.call import Call, PaymentPromise
-from app.models.message import CallMessage
 from app.models.customer import Customer
+from app.models.message import CallMessage
 from app.schemas.call import (
     CallCreate,
     CallMessageCreate,
@@ -28,6 +29,8 @@ from app.schemas.call import (
     PaymentPromiseResponse,
 )
 from app.services.gemini import summarize_call
+
+logger = logging.getLogger("voice-banking-api")
 
 router = APIRouter(
     prefix="/calls",
@@ -430,7 +433,10 @@ async def generate_call_summary(
     try:
         summary = await summarize_call(transcript)
     except Exception as exc:
-        # Do not expose provider or implementation details.
+        logger.exception(
+            "Call summary generation failed for call_id=%s",
+            call_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to generate call summary",
@@ -658,6 +664,10 @@ async def generate_internal_call_summary(
     try:
         summary = await summarize_call(transcript)
     except Exception as exc:
+        logger.exception(
+            "Call summary generation failed for call_id=%s",
+            call_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Unable to generate call summary",

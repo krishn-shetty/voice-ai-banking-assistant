@@ -5,7 +5,7 @@ import { HighlightsCard } from './HighlightsCard';
 import { DownloadSummaryButton } from './DownloadSummaryButton';
 
 interface SummaryPanelProps {
-  summary: CallSummary;
+  summary?: CallSummary | null;
   callId: string;
   ready?: boolean;
   showHighlights?: boolean;
@@ -15,13 +15,15 @@ export function SummaryPanel({
   summary,
   callId,
   ready = true,
-  showHighlights = true
+  showHighlights = true,
 }: SummaryPanelProps) {
   return (
     <div className="space-y-4">
       <CallSummaryCard summary={summary} ready={ready} />
-      {showHighlights && <HighlightsCard highlights={summary.highlights} />}
-      <DownloadSummaryButton callId={callId} />
-    </div>);
-
+      {showHighlights && summary?.highlights && (
+        <HighlightsCard highlights={summary.highlights} />
+      )}
+      <DownloadSummaryButton callId={callId} ready={ready} />
+    </div>
+  );
 }

@@ -5,12 +5,17 @@ import type {
   Highlight,
   LiveKitTokenResponse,
   Message,
-  MessageSender,
   User,
 } from "../types";
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
+
+if (!API_BASE_URL) {
+  throw new Error(
+    "VITE_API_BASE_URL is not configured. " +
+      "Set it in your .env file or Vercel environment variables.",
+  );
+}
 
 const SESSION_STORAGE_KEY = "kubera_session_id";
 
@@ -125,7 +130,6 @@ function authHeaders(): HeadersInit {
 export async function login(
   email: string,
   phoneNumber: string,
-  dateOfBirth: string,
 ): Promise<LoginResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
@@ -133,7 +137,6 @@ export async function login(
     body: JSON.stringify({
       email,
       phone_number: phoneNumber,
-      date_of_birth: dateOfBirth,
     }),
   });
 
@@ -155,7 +158,7 @@ export async function register(
   dateOfBirth: string,
   address: string,
   accountType: string,
-  initialBalance: number = 0,
+  initialBalance = 0,
 ): Promise<LoginResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/register`, {
     method: "POST",
@@ -325,12 +328,7 @@ export async function uploadAttachment(file: File): Promise<Attachment> {
   };
 }
 
-export async function sendMessage(_payload: {
-  callId: string | null;
-  text: string;
-  attachment?: Attachment;
-  assistantName: string;
-}): Promise<never> {
+export async function sendMessage(): Promise<never> {
   throw new Error(
     "Text messaging is not implemented in the current voice flow.",
   );
@@ -341,11 +339,12 @@ export async function sendMessage(_payload: {
 /* -------------------------------------------------------------------------- */
 
 export async function updatePreferences(
-  _patch: Record<string, unknown>,
+  patch?: unknown,
 ): Promise<void> {
   // Intentionally a no-op network call: there is no /preferences endpoint
   // on the backend yet. CallContext already persists preferences in memory
   // and the selected voice in localStorage.
+  void patch;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -355,32 +354,84 @@ export async function updatePreferences(
 export async function downloadCallSummary(
   callId: string,
   assistantName: string,
+  format: "pdf" | "txt" | "json" = "pdf",
 ): Promise<void> {
   const call = await getCall(callId);
 
+  if (format === "json") {
+    const jsonContent = JSON.stringify(call, null, 2);
+    const blob = new Blob([jsonContent], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `call-summary-${callId}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+
   const content = [
-    `Call Summary`,
+    `=================================================================`,
+    `CALL SUMMARY REPORT`,
+    `=================================================================`,
     ``,
     `Assistant: ${assistantName}`,
     `Title: ${call.title}`,
     `Date: ${call.dateGroup}`,
     `Time: ${call.time}`,
+    `Duration: ${call.duration}`,
     `Result: ${call.result}`,
     ``,
-    `Intent: ${call.summary.intent}`,
-    `Identity verified: ${call.summary.identityVerified ? "Yes" : "No"}`,
+    `-----------------------------------------------------------------`,
+    `SUMMARY DETAILS`,
+    `-----------------------------------------------------------------`,
+    `Primary Intent: ${call.summary.primaryIntent}`,
+    ...(call.summary.additionalIntents?.length
+      ? [`Additional Intents: ${call.summary.additionalIntents.join(", ")}`]
+      : []),
+    `Identity Verified: ${call.summary.identityVerified ? "Yes" : "No"}`,
     `Escalated: ${call.summary.escalated ? "Yes" : "No"}`,
-    ``,
-    `Key details: ${call.summary.keyDetails}`,
     `Outcome: ${call.summary.outcome}`,
+    ...(call.summary.paymentPromise
+      ? [`Payment Promise: ${call.summary.paymentPromise}`]
+      : []),
+    ``,
+    `Key Details:`,
+    ...call.summary.keyDetails.map((detail) => `  - ${detail}`),
+    ``,
+    ...(call.summary.actionsPerformed?.length
+      ? [
+          `Actions Performed:`,
+          ...call.summary.actionsPerformed.map((action) => `  - ${action}`),
+          ``,
+        ]
+      : []),
+    ...(call.summary.highlights?.length
+      ? [
+          `-----------------------------------------------------------------`,
+          `CONVERSATION HIGHLIGHTS`,
+          `-----------------------------------------------------------------`,
+          ...call.summary.highlights.map(
+            (h) => `[${h.time}] ${h.label}`,
+          ),
+          ``,
+        ]
+      : []),
+    `=================================================================`,
   ].join("\n");
 
-  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const ext = format === "pdf" ? "pdf" : "txt";
+  const mimeType =
+    format === "pdf" ? "application/pdf" : "text/plain;charset=utf-8";
+
+  const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
 
   anchor.href = url;
-  anchor.download = `call-summary-${callId}.txt`;
+  anchor.download = `call-summary-${callId}.${ext}`;
 
   document.body.appendChild(anchor);
   anchor.click();
@@ -522,6 +573,8 @@ function mapBackendCallToFrontend(call: BackendCall): CallRecord {
       ? "Resolved"
       : "Dropped";
 
+  const hasSummary = Object.keys(summary).length > 0;
+
   return {
     id: call.id,
     title: getCallTitle(intent),
@@ -531,7 +584,7 @@ function mapBackendCallToFrontend(call: BackendCall): CallRecord {
     duration: "—",
     result,
     summary: {
-      status: call.outcome ? "completed" : "incomplete",
+      status: (hasSummary || Boolean(call.outcome)) ? "completed" : "incomplete",
       identityVerified: true,
       primaryIntent: intent,
       additionalIntents,

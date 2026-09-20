@@ -39,7 +39,7 @@ export function HistoryPage() {
       const matchesFilter = filter === 'all' || c.intent === filter;
       const matchesQuery =
       !query.trim() ||
-      `${c.title} ${c.summary.intent} ${c.summary.keyDetails}`.
+      `${c.title} ${c.summary.primaryIntent} ${c.summary.keyDetails.join(" ")}`.
       toLowerCase().
       includes(query.trim().toLowerCase());
       return matchesFilter && matchesQuery;

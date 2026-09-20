@@ -10,7 +10,7 @@ import { Link } from "react-router-dom";
 
 import { useCall } from "../../contexts/CallContext";
 import { cn, maskAccountNumber } from "../../lib/utils";
-import { assistantProfiles } from "../../data/mockConversation";
+import { assistantProfiles } from "../../data/assistants";
 
 interface HeaderProps {
   onOpenMenu: () => void;

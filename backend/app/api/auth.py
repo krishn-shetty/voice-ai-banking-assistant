@@ -9,7 +9,12 @@ from sqlalchemy.orm import selectinload
 
 from app.db import get_db
 from app.models import Account, AuthSession, Customer
-from app.schemas.auth import LoginRequest, LoginResponse, RegisterRequest, SessionResponse
+from app.schemas.auth import (
+    LoginRequest,
+    LoginResponse,
+    RegisterRequest,
+    SessionResponse,
+)
 from app.services.auth_service import (
     authenticate_customer,
     create_session,
@@ -133,8 +138,9 @@ async def register(
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
-    from app.services.auth_service import normalize_phone
     import uuid
+
+    from app.services.auth_service import normalize_phone
 
     normalized_email = payload.email.strip().lower()
     normalized_phone = normalize_phone(payload.phone_number)

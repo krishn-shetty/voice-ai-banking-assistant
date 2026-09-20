@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -16,7 +19,6 @@ from livekit.agents import (
     function_tool,
 )
 from livekit.plugins import sarvam, silero
-from livekit import rtc
 
 from ai.llm.gemini import create_llm
 from ai.stt.deepgram import create_stt
@@ -24,7 +26,6 @@ from ai.tts.sarvam import create_tts, update_tts
 from banking.tools import BankingTools, http_request
 from config import (
     BACKEND_URL,
-    DEFAULT_ASSISTANT,
     DEFAULT_LANGUAGE,
 )
 from conversation.context import ConversationContext
@@ -46,7 +47,7 @@ Your current assistant persona is {persona_name}.
 IDENTITY:
 - You are an AI banking assistant.
 - Clearly disclose that you are an AI when starting the conversation.
-- This is a demonstration banking system using mock customer data.
+- This is a demonstration banking environment. Banking data is simulated and stored in the application's PostgreSQL database.
 - Never claim an action was completed unless the relevant tool confirms it.
 - Never invent banking information.
 
@@ -129,16 +130,16 @@ After successful escalation:
 
 VOICE PERSONAS:
 - Kubera = male voice.
-- Kanchan = female voice.
+- Kanchana = female voice.
 - "male voice" means Kubera.
-- "female voice" means Kanchan.
+- "female voice" means Kanchana.
 
 KUBERA ALIASES:
 - Kubera
 - Kuber
 - Kuberan
 
-KANCHAN ALIASES:
+KANCHANA ALIASES:
 - Kanchan
 - Kancchan
 - Kanshan
@@ -484,7 +485,11 @@ server = AgentServer()
 async def entrypoint(
     ctx: JobContext,
 ) -> None:
+    startup_start = time.time()
+    logger.info("[STARTUP] call started at %.3f", startup_start)
+
     await ctx.connect()
+    logger.info("[STARTUP] LiveKit connected (dt=%.3fs)", time.time() - startup_start)
 
     # ----------------------------------------------------------------------
     # Obtain the browser participant.
@@ -585,14 +590,35 @@ async def entrypoint(
     )
 
     session = AgentSession(
-        vad=silero.VAD.load(),
+        vad=silero.VAD.load(
+            # ---------------------------------------------------------------
+            # VAD tuning: prevent splitting on natural mid-sentence pauses
+            # ---------------------------------------------------------------
+            # Require 1.2 s of continuous silence before declaring speech
+            # ended. Dictation pauses for alphanumeric codes are typically
+            # 0.4–0.8 s, so 1.2 s provides headroom.
+            min_silence_duration=1.2,
+            # Ignore speech bursts shorter than 150 ms (likely noise).
+            min_speech_duration=0.15,
+            # Keep 500 ms of audio before speech onset so the first
+            # phoneme is not clipped.
+            prefix_padding_duration=0.5,
+            # Slightly more sensitive speech detection to reduce false
+            # silence gaps mid-word.
+            activation_threshold=0.45,
+        ),
         stt=create_stt(),
         llm=create_llm(),
         tts=sarvam_tts,
+        # -------------------------------------------------------------------
+        # Session endpointing: wait longer before finalizing user turn
+        # -------------------------------------------------------------------
+        min_endpointing_delay=1.5,   # was 0.5 s default
+        max_endpointing_delay=6.0,   # was 3.0 s default
+        turn_handling={
+            "interruption": {"enabled": False},
+        },
     )
-
-    import asyncio
-    import time
 
     background_tasks = set()
 
@@ -602,26 +628,136 @@ async def entrypoint(
         task.add_done_callback(background_tasks.discard)
 
     last_activity = time.time()
+    followup_sent = False
+    current_agent_state = "listening"
+    is_shutdown = False
+
+    def user_activity_occurred() -> None:
+        nonlocal last_activity, followup_sent
+        last_activity = time.time()
+        followup_sent = False
 
     async def silence_watcher() -> None:
-        while True:
-            await asyncio.sleep(1)
-            if time.time() - last_activity > 15:
-                logger.info("Disconnecting due to 15s of silence.")
-                try:
-                    await ctx.room.disconnect()
-                except Exception:
-                    logger.exception("Failed to disconnect room on silence timeout.")
-                break
+        nonlocal last_activity, followup_sent
+
+        try:
+            while not is_shutdown:
+                await asyncio.sleep(1)
+
+                if is_shutdown:
+                    break
+
+                if ctx.room.connection_state == rtc.ConnectionState.CONN_DISCONNECTED:
+                    logger.info("Room disconnected. Exiting silence watcher.")
+                    break
+
+                if not ctx.room.remote_participants:
+                    logger.info("No remote participants remaining. Exiting silence watcher.")
+                    break
+
+                # Never interrupt active assistant thinking or speech.
+                if current_agent_state in ("thinking", "speaking"):
+                    continue
+
+                elapsed = time.time() - last_activity
+
+                if not followup_sent and elapsed >= 15:
+                    logger.info(
+                        "Reasonable inactivity reached (15s). "
+                        "Sending follow-up prompt."
+                    )
+                    followup_sent = True
+                    last_activity = time.time()
+
+                    if (
+                        not is_shutdown
+                        and ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED
+                        and ctx.room.remote_participants
+                    ):
+                        try:
+                            session.say(
+                                "Are you still there? How can I help you?",
+                                add_to_chat_ctx=True,
+                            )
+                        except Exception:
+                            logger.exception("Failed to send silence follow-up prompt.")
+
+                elif followup_sent and elapsed >= 15:
+                    logger.info(
+                        "Genuine inactivity reached after follow-up. "
+                        "Disconnecting call."
+                    )
+
+                    try:
+                        if (
+                            not is_shutdown
+                            and ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED
+                            and ctx.room.remote_participants
+                        ):
+                            session.say(
+                                "I haven't heard from you for a while, "
+                                "so I will end this call now. Have a great day!",
+                                add_to_chat_ctx=True,
+                            )
+                            await asyncio.sleep(3)
+                            if (
+                                not is_shutdown
+                                and ctx.room.connection_state == rtc.ConnectionState.CONN_CONNECTED
+                            ):
+                                await ctx.room.disconnect()
+
+                    except Exception:
+                        logger.exception(
+                            "Failed to disconnect room on silence timeout."
+                        )
+
+                    break
+        except asyncio.CancelledError:
+            logger.info("Silence watcher task cancelled.")
 
     watcher_task = asyncio.create_task(silence_watcher())
+
+    @ctx.room.on("participant_disconnected")
+    def on_participant_disconnected(remote_participant: rtc.RemoteParticipant) -> None:
+        logger.info("Participant %s disconnected. Cancelling silence watcher.", getattr(remote_participant, "identity", "unknown"))
+        if not watcher_task.done():
+            watcher_task.cancel()
+
+    # ------------------------------------------------------------------
+    # TURN-DEBUG: speech lifecycle logging
+    # ------------------------------------------------------------------
+
+    @session.on("user_started_speaking")
+    def on_user_started_speaking() -> None:
+        logger.info("[TURN-DEBUG] speech_started")
+        user_activity_occurred()
+
+    @session.on("user_stopped_speaking")
+    def on_user_stopped_speaking() -> None:
+        logger.info("[TURN-DEBUG] speech_ended")
 
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(
         event: UserInputTranscribedEvent,
     ) -> None:
+        user_activity_occurred()
+        # ----------------------------------------------------------------
+        # Interim transcripts: log for debugging only, never publish.
+        # ----------------------------------------------------------------
         if not event.is_final:
+            logger.info(
+                "[TURN-DEBUG] interim_transcript len=%d",
+                len(event.transcript),
+            )
             return
+
+        # ----------------------------------------------------------------
+        # Final transcript: process and publish exactly once.
+        # ----------------------------------------------------------------
+        logger.info(
+            "[TURN-DEBUG] final_transcript len=%d",
+            len(event.transcript),
+        )
 
         if event.language:
             state.set_language(
@@ -643,27 +779,10 @@ async def entrypoint(
             )
 
         logger.info(
-            "[transcript] language=%s assistant=%s text=%s",
+            "[transcript] language=%s assistant=%s",
             state.language,
             state.assistant,
-            event.transcript,
         )
-
-        nonlocal last_activity
-        last_activity = time.time()
-
-        # We publish the transcript to the frontend immediately so the user sees their speech
-        try:
-            payload = json.dumps({
-                "type": "user_transcript",
-                "text": event.transcript
-            }).encode("utf-8")
-            
-            add_background_task(
-                ctx.room.local_participant.publish_data(payload)
-            )
-        except Exception:
-            logger.exception("Failed to publish user transcript data")
 
     @ctx.room.on("data_received")
     def on_data_received(data_packet: rtc.DataPacket) -> None:
@@ -673,32 +792,9 @@ async def entrypoint(
                 text = payload.get("message")
                 if text:
                     logger.info("Received chat message from user: %s", text)
-                    
-                    # Update activity
-                    nonlocal last_activity
-                    last_activity = time.time()
-                    
-                    # 1. Add to session history so LLM sees it
-                    session.history.add_message(role="user", content=text)
-                    
-                    # 2. Publish back to frontend so it shows in UI
-                    # NOTE: The frontend already echoes typed messages locally via emitTranscript
-                    # so we don't need to publish it back over the data channel.
-                        
-                    # 3. Save to backend messages DB
-                    add_background_task(
-                        http_request(
-                            "POST",
-                            f"{BACKEND_URL}/calls/internal/{state.call_id}/messages",
-                            json={
-                                "role": "user",
-                                "content": text,
-                            }
-                        )
-                    )
-                    
-                    # 4. Generate LLM reply
-                    add_background_task(session.generate_reply())
+                    user_activity_occurred()
+                    # Inject a real user text turn into the AgentSession context
+                    session.generate_reply(user_input=text)
             except Exception:
                 logger.exception("Failed to process lk-chat data packet")
 
@@ -716,38 +812,72 @@ async def entrypoint(
         if callable(text_content):
             try:
                 text_content = text_content()
-            except Exception:
+            except (TypeError, ValueError, AttributeError) as exc:
+                logger.warning("Failed to resolve text_content: %s", exc)
                 text_content = None
 
         if not text_content:
             return
 
-        nonlocal last_activity
-        last_activity = time.time()
+        if role == "user":
+            user_activity_occurred()
 
+        # 1. Save message to backend PostgreSQL database (Derive role)
+        canonical_role = "assistant" if role in ("assistant", "agent") else "user"
         add_background_task(
             http_request(
                 "POST",
                 f"{BACKEND_URL}/calls/internal/{state.call_id}/messages",
                 json={
-                    "role": "assistant" if role in ("assistant", "agent") else "user",
+                    "role": canonical_role,
                     "content": text_content,
                 }
             )
         )
 
-        if role in ("assistant", "agent"):
-            try:
-                payload = json.dumps({
-                    "type": "assistant_transcript",
-                    "text": text_content
-                }).encode("utf-8")
-                
-                add_background_task(
-                    ctx.room.local_participant.publish_data(payload)
-                )
-            except Exception:
-                logger.exception("Failed to publish agent transcript data")
+        # 2. Publish canonical transcript to frontend UI via DataChannel
+        msg_type = "assistant_transcript" if role in ("assistant", "agent") else "user_transcript"
+        try:
+            payload = json.dumps({
+                "type": msg_type,
+                "text": text_content
+            }).encode("utf-8")
+            
+            add_background_task(
+                ctx.room.local_participant.publish_data(payload)
+            )
+        except Exception:
+            logger.exception("Failed to publish %s data", msg_type)
+
+    @session.on("agent_state_changed")
+    def on_agent_state_changed(event) -> None:
+        nonlocal current_agent_state, last_activity
+        new_state = getattr(event, "new_state", None)
+        old_state = getattr(event, "old_state", None)
+
+        if new_state:
+            current_agent_state = str(new_state)
+
+        if new_state == "speaking":
+            if getattr(session, "_startup_audio_logged", False) is False:
+                session._startup_audio_logged = True
+                logger.info("[STARTUP] greeting audio started (dt=%.3fs)", time.time() - startup_start)
+            logger.info("[VOICE] assistant response started")
+        elif new_state in ("idle", "listening") and old_state == "speaking":
+            logger.info("[VOICE] assistant response completed")
+            last_activity = time.time()
+
+        try:
+            payload = json.dumps({
+                "type": "agent_state",
+                "state": new_state
+            }).encode("utf-8")
+            
+            add_background_task(
+                ctx.room.local_participant.publish_data(payload)
+            )
+        except (TypeError, ValueError, AttributeError) as exc:
+            logger.warning("Failed to publish agent_state data: %s", exc)
 
     # removed dead agent_speech_committed handler
 
@@ -763,17 +893,24 @@ async def entrypoint(
         ),
     )
 
-    await session.generate_reply(
-        instructions=(
-            f"Introduce yourself as {state.persona_name()}. "
-            "Clearly disclose that you are an AI banking assistant. "
-            "Keep the introduction short and natural. "
-            "Then, ask how you can help them today."
-        ),
-    )
+    logger.info("[STARTUP] agent ready (dt=%.3fs)", time.time() - startup_start)
+
+    # Use direct initialization rather than LLM to save latency
+    logger.info("[STARTUP] greeting generation started (dt=%.3fs)", time.time() - startup_start)
+    
+    greeting = f"Welcome to Kautilya Bank. I'm {state.persona_name()}, your AI voice banking assistant. How can I help you today?"
+    session.say(greeting, add_to_chat_ctx=True)
 
     async def on_shutdown() -> None:
-        watcher_task.cancel()
+        nonlocal is_shutdown
+        is_shutdown = True
+        if not watcher_task.done():
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
+
         if background_tasks:
             logger.info("Waiting for %d background tasks to finish...", len(background_tasks))
             await asyncio.gather(*background_tasks, return_exceptions=True)
