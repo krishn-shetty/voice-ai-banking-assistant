@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 import aiohttp
@@ -12,6 +13,8 @@ NOT_AVAILABLE = "not available"
 CALL_NOT_IDENTIFIED_MESSAGE = (
     "I couldn't identify this banking call. Please reconnect and try again."
 )
+
+logger = logging.getLogger("voice-banking-agent")
 
 
 async def http_request(
@@ -115,18 +118,35 @@ class BankingTools:
         )
 
         if status == 403:
+            logger.error(
+                "get_customer_info: 403 from backend call_id=%s customer_id=%s body=%s",
+                self.state.call_id,
+                self.state.customer_id,
+                data,
+            )
             return (
                 "I couldn't verify this banking session. "
                 "Please reconnect and try again."
             )
 
         if status == 404:
+            logger.error(
+                "get_customer_info: 404 from backend call_id=%s customer_id=%s body=%s",
+                self.state.call_id,
+                self.state.customer_id,
+                data,
+            )
             return (
                 "I couldn't find the account for this session. "
                 "Please reconnect and try again."
             )
 
         if status != 200 or not isinstance(data, dict):
+            logger.error(
+                "get_customer_info: unexpected response status=%s body=%s",
+                status,
+                data,
+            )
             return (
                 "I couldn't retrieve the account information "
                 "right now. Please try again."
