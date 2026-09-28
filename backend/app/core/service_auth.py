@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 import jwt
 from dotenv import load_dotenv
-from fastapi import Header, HTTPException, status
+from fastapi import Header, HTTPException, Request, status
 
 load_dotenv()
 
@@ -55,12 +56,8 @@ def create_agent_service_token() -> str:
     )
 
 
-def verify_agent_service_token(
-    authorization: str | None = Header(default=None),
-) -> None:
-    """
-    Verify a short-lived JWT presented by the voice agent.
-    """
+def _decode_service_token(authorization: str | None) -> dict[str, Any]:
+    """Decode and validate a service JWT; raise 401 on any failure."""
 
     if authorization is None:
         raise HTTPException(
@@ -111,3 +108,51 @@ def verify_agent_service_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid service identity.",
         )
+
+    return payload
+
+
+def verify_agent_service_token(
+    authorization: str | None = Header(default=None),
+) -> None:
+    """
+    Verify a short-lived JWT presented by the voice agent.
+    """
+    _decode_service_token(authorization)
+
+
+def get_agent_token_claims(
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """
+    Decode the service JWT and return its payload.
+
+    Use this as a FastAPI dependency when an endpoint needs to read
+    call_id / customer_id claims that were embedded by the agent.
+    """
+    return _decode_service_token(authorization)
+
+
+def extract_call_customer_ids(
+    claims: dict[str, Any],
+) -> tuple[UUID | None, UUID | None]:
+    """
+    Parse call_id and customer_id UUID claims from a token payload.
+
+    Returns (call_id, customer_id). Either may be None if not present.
+    """
+
+    raw_call_id = claims.get("call_id")
+    raw_customer_id = claims.get("customer_id")
+
+    try:
+        call_id = UUID(raw_call_id) if raw_call_id else None
+    except (ValueError, AttributeError):
+        call_id = None
+
+    try:
+        customer_id = UUID(raw_customer_id) if raw_customer_id else None
+    except (ValueError, AttributeError):
+        customer_id = None
+
+    return call_id, customer_id

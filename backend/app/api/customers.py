@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.auth import get_current_customer
-from app.core.service_auth import verify_agent_service_token
+from app.core.service_auth import (
+    extract_call_customer_ids,
+    get_agent_token_claims,
+    verify_agent_service_token,
+)
 from app.db import get_db
 from app.models import Account, Call, Customer, Loan
 from app.schemas.customer import (
@@ -231,7 +235,90 @@ async def get_customer_context(
 
 
 # ---------------------------------------------------------------------------
-# Agent-only account endpoint
+# Agent-only "me" endpoint — identity from JWT, no account_id required
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/internal/me",
+)
+async def get_authenticated_customer_for_agent(
+    db: DbSession,
+    claims: dict = Depends(get_agent_token_claims),
+) -> dict:
+    """
+    Retrieve account information for the customer bound to this call.
+
+    Security:
+        1. Agent must possess a valid service JWT.
+        2. JWT must carry call_id and customer_id claims (set at session start).
+        3. The call record must exist and belong to the claimed customer.
+        4. Account data is returned only for that customer — no account_id
+           is accepted from the request at all.
+    """
+
+    call_id, customer_id = extract_call_customer_ids(claims)
+
+    if call_id is None or customer_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Service token is missing call or customer identity.",
+        )
+
+    # Verify the call exists and belongs to the claimed customer.
+    call_result = await db.execute(
+        select(Call).where(
+            Call.id == call_id,
+            Call.customer_id == customer_id,
+        )
+    )
+    call = call_result.scalar_one_or_none()
+
+    if call is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Call not found or does not belong to this customer.",
+        )
+
+    statement = (
+        select(Customer, Account, Loan)
+        .join(
+            Account,
+            Account.customer_id == Customer.id,
+        )
+        .outerjoin(
+            Loan,
+            Loan.customer_id == Customer.id,
+        )
+        .where(
+            Customer.id == customer_id,
+        )
+    )
+
+    result = await db.execute(statement)
+    row = result.first()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=ACCOUNT_NOT_FOUND,
+        )
+
+    customer, account, loan = row
+
+    return {
+        "customer_id": str(customer.id),
+        "full_name": customer.full_name,
+        "account_id": account.account_id,
+        "balance": account.balance,
+        "emi_amount": (loan.emi_amount if loan is not None else None),
+        "emi_due_date": (loan.emi_due_date.isoformat() if loan is not None else None),
+        "loan_status": (loan.loan_status if loan is not None else None),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Agent-only account endpoint (legacy path — kept for compatibility)
 # ---------------------------------------------------------------------------
 CALL_NOT_FOUND = "Call not found"
 
@@ -246,6 +333,7 @@ async def get_account_for_agent(
     account_id: str,
     call_id: UUID,
     db: DbSession,
+    claims: dict = Depends(get_agent_token_claims),
 ) -> dict:
     """
     Retrieve an account for the trusted voice agent.
@@ -255,9 +343,10 @@ async def get_account_for_agent(
     Security:
         1. Agent must possess a valid service JWT.
         2. Call must exist.
-        3. Account must belong to the call's customer.
-        4. Returned customer must therefore be the customer associated
-           with the authenticated LiveKit session.
+        3. JWT customer_id claim must match the call's customer (403 otherwise).
+        4. Account must belong to the call's customer.
+        5. Returned customer is therefore the customer associated with the
+           authenticated LiveKit session.
     """
 
     normalized_account_id = account_id.strip().upper()
@@ -266,6 +355,15 @@ async def get_account_for_agent(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=ACCOUNT_ID_REQUIRED,
+        )
+
+    # Enforce JWT call_id / customer_id claims BEFORE any DB round-trip.
+    # If the token was scoped to a different call, reject immediately.
+    jwt_call_id, jwt_customer_id = extract_call_customer_ids(claims)
+    if jwt_call_id is not None and jwt_call_id != call_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token call does not match requested call.",
         )
 
     call_result = await db.execute(
@@ -280,6 +378,13 @@ async def get_account_for_agent(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=CALL_NOT_FOUND,
+        )
+
+    # Secondary check: JWT customer_id claim must match the call's owner.
+    if jwt_customer_id is not None and jwt_customer_id != call.customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token customer does not match call customer.",
         )
 
     statement = (

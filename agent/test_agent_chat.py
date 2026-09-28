@@ -36,13 +36,21 @@ async def test_conversation_flow():
             f"[EVENT CAPTURED] role={canonical_role}, type={msg_type}, text='{text_content}'"
         )
 
-    # 2. Test typed chat behavior
-    typed_message = "My account number is AC4EEB7BA2"
+    # 2. Test that the session is bound correctly (identity from session, not speech)
+    assert state.customer_id == customer_id, "customer_id must come from session metadata"
+    assert state.call_id == call_id, "call_id must come from session metadata"
+    assert not hasattr(state, "account_id"), (
+        "ConversationContext must not have account_id — the old verification step is removed"
+    )
+
+    # 3. Simulate a session-bound conversation: customer asks about balance
+    typed_message = "What is my account balance?"
     logger.info(f"Simulating typed user message: '{typed_message}'")
 
     mock_on_conversation_item_added("user", typed_message)
 
-    assistant_response = "Thank you. Let me verify account AC4EEB7BA2 for you."
+    # Agent should respond with balance info (fetched via get_customer_info, not get_account_info)
+    assistant_response = "Your current account balance is ₹42,000."
     mock_on_conversation_item_added("assistant", assistant_response)
 
     assert len(events_captured) == 2, f"Expected 2 events, got {len(events_captured)}"
@@ -53,7 +61,7 @@ async def test_conversation_flow():
         assistant_response,
     )
 
-    logger.info("Basic conversation flow test passed successfully!")
+    logger.info("Session-bound conversation flow test passed successfully!")
 
 
 @pytest.mark.asyncio

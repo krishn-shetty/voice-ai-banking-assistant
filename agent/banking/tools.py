@@ -18,13 +18,19 @@ async def http_request(
     method: str,
     url: str,
     *,
+    call_id: str | None = None,
+    customer_id: str | None = None,
     json: dict[str, Any] | None = None,
     params: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
-    """Make an authenticated request to the banking backend."""
+    """Make an authenticated request to the banking backend.
+
+    When call_id and customer_id are supplied they are embedded in the
+    service JWT so the backend can enforce call-scoped ownership.
+    """
 
     timeout = aiohttp.ClientTimeout(total=15)
-    headers = get_backend_headers()
+    headers = get_backend_headers(call_id=call_id, customer_id=customer_id)
 
     async with aiohttp.ClientSession(
         timeout=timeout,
@@ -61,24 +67,36 @@ async def http_request(
 
 
 class BankingTools:
-    """Backend-backed banking operations available to the voice agent."""
+    """Backend-backed banking operations available to the voice agent.
+
+    Security guarantees
+    -------------------
+    * No tool method accepts a customer_id or account_id parameter.
+    * All identity is derived from ConversationContext.call_id /
+      ConversationContext.customer_id, which are set once at call start
+      from trusted LiveKit participant metadata and never mutated by the LLM.
+    * The service JWT carries call_id + customer_id claims so the backend
+      can reject any request that does not match the call's owner.
+    """
 
     def __init__(self, state) -> None:
         self.state = state
 
-    async def get_account_info(
-        self,
-        account_id: str,
-    ) -> str:
+    def _scoped_headers(self) -> dict[str, str]:
+        """Return auth headers with call_id + customer_id embedded in JWT."""
+        return get_backend_headers(
+            call_id=self.state.call_id,
+            customer_id=self.state.customer_id,
+        )
+
+    async def get_customer_info(self) -> str:
         """
         Retrieve account information for the customer already bound
         to this LiveKit call.
+
+        Identity is derived entirely from the call record on the backend;
+        no account ID is supplied by the LLM.
         """
-
-        account_id = account_id.strip().upper()
-
-        if not account_id:
-            return "Please provide your account ID."
 
         if not self.state.customer_id:
             return (
@@ -91,22 +109,21 @@ class BankingTools:
 
         status, data = await http_request(
             "GET",
-            f"{BACKEND_URL}/customers/internal/{account_id}",
-            params={
-                "call_id": self.state.call_id,
-            },
+            f"{BACKEND_URL}/customers/internal/me",
+            call_id=self.state.call_id,
+            customer_id=self.state.customer_id,
         )
-
-        if status == 404:
-            return (
-                "I couldn't find that account. "
-                "Please check the account ID and provide it again."
-            )
 
         if status == 403:
             return (
-                "I couldn't verify that account for this banking session. "
-                "Please check the account ID."
+                "I couldn't verify this banking session. "
+                "Please reconnect and try again."
+            )
+
+        if status == 404:
+            return (
+                "I couldn't find the account for this session. "
+                "Please reconnect and try again."
             )
 
         if status != 200 or not isinstance(data, dict):
@@ -115,25 +132,12 @@ class BankingTools:
                 "right now. Please try again."
             )
 
-        customer_id = data.get("customer_id")
-
-        if not customer_id:
-            return "I found the account, but I couldn't verify the customer record."
-
-        # The backend performs this ownership check as well.
-        # This second check prevents the agent from accidentally
-        # treating another customer's response as the current
-        # customer's account.
-        if str(customer_id) != self.state.customer_id:
-            return (
-                "I couldn't verify that account for this banking session. "
-                "Please check the account ID."
-            )
-
-        self.state.account_id = account_id
+        # Cache the customer name so the agent can greet by name.
+        full_name = data.get("full_name")
+        if full_name:
+            self.state.customer_name = full_name
 
         return (
-            "Customer verified. "
             f"Name: {data.get('full_name', 'the customer')}. "
             f"Account balance: "
             f"{data.get('balance', NOT_AVAILABLE)}. "
@@ -160,15 +164,14 @@ class BankingTools:
                 "a payment promise can be recorded."
             )
 
-        if not self.state.account_id:
-            return "Please verify your account before recording a payment promise."
-
         if not self.state.call_id:
             return CALL_NOT_IDENTIFIED_MESSAGE
 
         status, data = await http_request(
             "POST",
             f"{BACKEND_URL}/calls/internal/payment-promises",
+            call_id=self.state.call_id,
+            customer_id=self.state.customer_id,
             json={
                 "call_id": self.state.call_id,
                 "promised_amount": promised_amount,
@@ -207,6 +210,8 @@ class BankingTools:
         status, data = await http_request(
             "POST",
             f"{BACKEND_URL}/calls/internal/{self.state.call_id}/escalate",
+            call_id=self.state.call_id,
+            customer_id=self.state.customer_id,
             json={
                 "reason": reason,
             },

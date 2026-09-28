@@ -75,20 +75,34 @@ DEFAULT_LANGUAGE = os.getenv(
 )
 
 
-def create_backend_service_token() -> str:
+def create_backend_service_token(
+    *,
+    call_id: str | None = None,
+    customer_id: str | None = None,
+) -> str:
     """
     Create a short-lived service JWT for FastAPI.
+
+    When call_id and customer_id are provided they are embedded as claims
+    so the backend can enforce that the request is scoped to exactly the
+    authenticated call/customer pair set at session start.
     """
 
     now = int(time.time())
 
-    payload = {
+    payload: dict = {
         "iss": SERVICE_ISSUER,
         "sub": SERVICE_SUBJECT,
         "aud": SERVICE_AUDIENCE,
         "iat": now,
         "exp": now + SERVICE_TOKEN_LIFETIME_SECONDS,
     }
+
+    if call_id is not None:
+        payload["call_id"] = call_id
+
+    if customer_id is not None:
+        payload["customer_id"] = customer_id
 
     return jwt.encode(
         payload,
@@ -97,8 +111,14 @@ def create_backend_service_token() -> str:
     )
 
 
-def get_backend_headers() -> dict[str, str]:
+def get_backend_headers(
+    *,
+    call_id: str | None = None,
+    customer_id: str | None = None,
+) -> dict[str, str]:
     return {
-        "Authorization": (f"Bearer {create_backend_service_token()}"),
+        "Authorization": (
+            f"Bearer {create_backend_service_token(call_id=call_id, customer_id=customer_id)}"
+        ),
         "Content-Type": "application/json",
     }

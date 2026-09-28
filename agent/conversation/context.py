@@ -89,13 +89,14 @@ class ConversationContext:
     language: str = "en-IN"
     detected_language: str | None = None
 
-    # These two values are established by the authenticated backend/LiveKit
+    # These values are established by the authenticated backend/LiveKit
     # session. They must not be selected by the LLM.
     customer_id: str | None = None
     call_id: str | None = None
 
-    # This value is established only after account verification.
-    account_id: str | None = None
+    # Populated from the backend on first account data fetch.
+    # The LLM may read this to greet the customer by name.
+    customer_name: str | None = None
 
     escalated: bool = False
     transcript: list[str] = field(default_factory=list)
